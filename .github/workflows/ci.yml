@@ -1,4 +1,4 @@
-name: CI
+clearcname: CI
 
 on:
   push:
@@ -25,7 +25,9 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Установить uv
-        uses: astral-sh/setup-uv@v10
+        # Плавающих мажорных тегов выше v7 у этого экшена нет, поэтому
+        # используем конкретный тег релиза (v10.3.0), а не @v10.
+        uses: astral-sh/setup-uv@v10.3.0
         with:
           # Кэшируем скачанные пакеты и интерпретаторы Python между запусками.
           enable-cache: true

@@ -1,4 +1,4 @@
-clearcname: CI
+name: CI
 
 on:
   push:

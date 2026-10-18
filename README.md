@@ -1,5 +1,7 @@
 # FastAPI + PostgreSQL + Alembic
 
+[![CI](https://github.com/gornyhivan01/prototype/actions/workflows/ci.yml/badge.svg)](https://github.com/gornyhivan01/prototype/actions/workflows/ci.yml)
+
 Для знакомства с **FastAPI**, **PostgreSQL** и **Alembic**.
 Три ручки, одна миграция и юнит-тесты.
 

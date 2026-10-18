@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Минимально необходимые права: только чтение репозитория.
+permissions:
+  contents: read
+
+# Отменяем предыдущий запуск при новом push в ту же ветку.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Линтер, форматирование и тесты
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Получить исходники
+        uses: actions/checkout@v7
+
+      - name: Установить uv
+        uses: astral-sh/setup-uv@v10
+        with:
+          # Кэшируем скачанные пакеты и интерпретаторы Python между запусками.
+          enable-cache: true
+          # Версия Python берётся из .python-version, здесь дублируем явно.
+          python-version: "3.12"
+
+      - name: Установить зависимости
+        # --locked падает, если uv.lock расходится с pyproject.toml:
+        # в CI важно, чтобы зафиксированные версии были актуальны.
+        run: uv sync --locked
+
+      - name: Линтер (ruff)
+        run: uv run ruff check .
+
+      - name: Форматирование (black)
+        run: uv run black --check .
+
+      - name: Тесты (pytest)
+        run: uv run pytest

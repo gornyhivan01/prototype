@@ -74,21 +74,6 @@ uv run uvicorn app.main:app --reload
 В Swagger UI удобно так: создайте пользователя, нажмите **Authorize**, введите
 email в поле *username* и пароль — токен подставится в запросы автоматически.
 
-```bash
-# Регистрация
-curl -X POST http://localhost:8000/users \
-  -H "Content-Type: application/json" \
-  -d '{"email": "ivan.petrov@example.com", "full_name": "Иван Петров", "password": "secret123"}'
-
-# Вход (форма OAuth2: username — это email)
-curl -X POST http://localhost:8000/auth/login \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "username=ivan.petrov@example.com&password=secret123"
-
-# Защищённая ручка
-curl http://localhost:8000/users/me -H "Authorization: Bearer <token>"
-```
-
 Пароль и токен — разные вещи: пароль проверяется один раз и не хранится в
 открытом виде, а JWT клиент отправляет в каждом запросе. Подпись токена
 проверяется ключом `SECRET_KEY`: без него токен не подделать, но и сервис не
@@ -96,18 +81,115 @@ curl http://localhost:8000/users/me -H "Authorization: Bearer <token>"
 
 > **Важно:** значение `SECRET_KEY` по умолчанию подходит только для локального
 > запуска. В продакшене задайте случайную строку не короче 32 символов:
-> `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+> `uv run python -c "import secrets; print(secrets.token_urlsafe(32))"`.
 
-## Проверка ручек
+Пошаговые команды с ожидаемыми ответами — в разделе [«Проверка»](#проверка).
+
+## Проверка
+
+### 1. Сервис жив
 
 ```bash
-curl http://localhost:8000/health
+curl -s http://localhost:8000/health
+# {"status":"ok"}
+```
 
-curl -X POST http://localhost:8000/users \
+### 2. Регистрация и хранение пароля
+
+```bash
+curl -s -X POST http://localhost:8000/users \
   -H "Content-Type: application/json" \
   -d '{"email": "ivan.petrov@example.com", "full_name": "Иван Петров", "password": "secret123"}'
+# {"id":1,"email":"ivan.petrov@example.com","full_name":"Иван Петров","created_at":"..."}
+```
 
-curl http://localhost:8000/users/1
+В ответе нет ни пароля, ни хеша. Убедимся, что в PostgreSQL лежит именно
+SHA-256:
+
+```bash
+docker compose exec postgres psql -U app -d app \
+  -c "SELECT email, hashed_password FROM users;"
+
+uv run python -c "import hashlib; print(hashlib.sha256(b'secret123').hexdigest())"
+```
+
+Обе строки должны совпасть: 64 hex-символа, одинаковых для одинаковых паролей
+(это и есть слабость SHA-256 без соли).
+
+### 3. Вход и защищённая ручка
+
+```bash
+# Логин: сохраняем токен в переменную окружения
+TOKEN=$(curl -s -X POST http://localhost:8000/auth/login \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=ivan.petrov@example.com&password=secret123" | jq -r .access_token)
+
+# Если jq не установлен:
+# TOKEN=$(curl -s -X POST http://localhost:8000/auth/login \
+#   -H "Content-Type: application/x-www-form-urlencoded" \
+#   -d "username=ivan.petrov@example.com&password=secret123" \
+#   | uv run python -c "import sys, json; print(json.load(sys.stdin)['access_token'])")
+
+curl -s http://localhost:8000/users/me -H "Authorization: Bearer $TOKEN"
+# {"id":1,"email":"ivan.petrov@example.com","full_name":"Иван Петров","created_at":"..."}
+```
+
+Проверка ошибок:
+
+```bash
+# Неверный пароль → 401
+curl -s -o /dev/null -w "%{http_code}\n" -X POST http://localhost:8000/auth/login \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=ivan.petrov@example.com&password=wrong-password"
+# 401
+
+# Без токена → 401
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8000/users/me
+# 401
+```
+
+### 4. Срок жизни токена
+
+Ответ логина содержит `expires_in`:
+
+```bash
+curl -s -X POST http://localhost:8000/auth/login \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=ivan.petrov@example.com&password=secret123" | uv run python -m json.tool
+# {
+#   "access_token": "eyJ...",
+#   "token_type": "bearer",
+#   "expires_in": 1800
+# }
+```
+
+Тот же срок записан в самом токене (`exp - iat`):
+
+```bash
+export TOKEN
+uv run python - <<'PY'
+import base64
+import json
+import os
+
+payload = os.environ["TOKEN"].split(".")[1]
+payload += "=" * (-len(payload) % 4)
+data = json.loads(base64.urlsafe_b64decode(payload))
+print("iat:", data["iat"], "exp:", data["exp"])
+print("срок жизни, сек:", data["exp"] - data["iat"])
+PY
+# срок жизни, сек: 1800
+```
+
+Как увидеть отказ по истечении:
+
+```bash
+# 1. В .env поставьте ACCESS_TOKEN_EXPIRE_MINUTES=1 и перезапустите сервис.
+# 2. Войдите заново и получите TOKEN (как в шаге 3).
+# 3. Подождите ~70 секунд и повторите запрос:
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8000/users/me \
+  -H "Authorization: Bearer $TOKEN"
+# 401 — токен просрочен, нужно войти заново
 ```
 
 ## Тесты и покрытие

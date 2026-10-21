@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.audit import AuditAction, add_entry, log_entry
 from app.config import get_settings
 from app.database import get_db
 from app.examples import (
@@ -49,6 +50,9 @@ curl -X POST http://localhost:8000/auth/login \\
 **Время жизни.** Токен действует `ACCESS_TOKEN_EXPIRE_MINUTES` минут (по
 умолчанию 30). Срок записан в claim `exp`; после него сервер вернёт `401`, и
 нужно войти заново. Ответ содержит `expires_in` — тот же срок в секундах.
+
+**Аудит.** Успешная и неуспешная попытки входа пишутся в таблицу `audit_log`
+и в лог приложения; пароль и токен туда не попадают.
 """,
     responses={
         200: {
@@ -62,10 +66,20 @@ curl -X POST http://localhost:8000/auth/login \\
 def login(
     form: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: DbSession,
+    request: Request,
 ) -> Token:
     """Проверяет пароль и возвращает JWT."""
     user = db.scalar(select(User).where(User.email == form.username))
     if user is None or not verify_password(form.password, user.hashed_password):
+        entry = add_entry(
+            db,
+            action=AuditAction.LOGIN_FAILED,
+            email=form.username,
+            request=request,
+            details={"reason": "unknown_email" if user is None else "invalid_password"},
+        )
+        db.commit()
+        log_entry(entry)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Неверный email или пароль",
@@ -76,7 +90,17 @@ def login(
         # Прозрачная миграция: старый хеш (например, SHA-256) заменяется
         # на Argon2id в момент успешного входа.
         user.hashed_password = hash_password(form.password)
-        db.commit()
+
+    entry = add_entry(
+        db,
+        action=AuditAction.LOGIN_SUCCESS,
+        actor_id=user.id,
+        target_user_id=user.id,
+        email=user.email,
+        request=request,
+    )
+    db.commit()
+    log_entry(entry)
 
     return Token(
         access_token=create_access_token(subject=str(user.id)),

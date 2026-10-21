@@ -6,11 +6,20 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI
 
 from app.config import get_settings
 from app.examples import HEALTH_EXAMPLE
 from app.routers import auth, users
+
+# Аудит пишется в stdout через logger "app.audit". basicConfig не перетирает
+# настройки uvicorn, если обработчики уже добавлены.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 settings = get_settings()
 
@@ -25,6 +34,9 @@ app = FastAPI(
 **Аутентификация:** пароль при регистрации превращается в Argon2id-хеш,
 `POST /auth/login` выдаёт JWT (access-токен), а `GET /users/me` принимает его
 в заголовке `Authorization: Bearer <token>`.
+
+**Аудит:** создание пользователя и попытки входа пишутся в таблицу
+`audit_log` и дублируются в stdout. Пароли и токены в аудит не попадают.
 
 **Как попробовать:**
 

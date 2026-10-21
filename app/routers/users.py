@@ -8,10 +8,11 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.audit import AuditAction, add_entry, log_entry, log_rejection
 from app.database import get_db
 from app.dependencies import CurrentUser
 from app.examples import (
@@ -66,6 +67,7 @@ curl -X POST http://localhost:8000/users \\
 def create_user(
     payload: Annotated[UserCreate, Body(openapi_examples=CREATE_USER_EXAMPLES)],
     db: DbSession,
+    request: Request,
 ) -> User:
     """Создаёт пользователя; email должен быть уникальным."""
     user = User(
@@ -75,14 +77,30 @@ def create_user(
     )
     db.add(user)
     try:
+        db.flush()  # получаем id и проверяем уникальность email
+        entry = add_entry(
+            db,
+            action=AuditAction.USER_CREATED,
+            actor_id=user.id,
+            target_user_id=user.id,
+            email=user.email,
+            request=request,
+        )
         db.commit()
     except IntegrityError:
         db.rollback()
+        log_rejection(
+            action=AuditAction.USER_CREATED.value,
+            email=payload.email,
+            request=request,
+            reason="duplicate_email",
+        )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Пользователь с таким email уже существует",
         ) from None
     db.refresh(user)
+    log_entry(entry)
     return user
 
 

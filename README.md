@@ -3,7 +3,7 @@
 [![CI](https://github.com/gornyhivan01/prototype/actions/workflows/ci.yml/badge.svg)](https://github.com/gornyhivan01/prototype/actions/workflows/ci.yml)
 
 Для знакомства с **FastAPI**, **PostgreSQL** и **Alembic**.
-Пять ручек, две миграции, аутентификация по паролю с JWT и юнит-тесты.
+Пять ручек, три миграции, аутентификация по паролю с JWT, аудит и юнит-тесты.
 
 ## Что внутри
 
@@ -16,6 +16,9 @@
 | `GET /users/{id}` | Просмотр пользователя (чтение из PostgreSQL) |
 
 Автоматические **Swagger UI** (`/docs`) и **OpenAPI** (`/openapi.json`).
+
+Создание пользователя и попытки входа пишутся в таблицу `audit_log` и в лог
+приложения — см. раздел [«Аудит»](#аудит).
 
 ## Стек
 
@@ -195,14 +198,54 @@ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8000/users/me \
 # 401 — токен просрочен, нужно войти заново
 ```
 
+## Аудит
+
+Действия пользователей фиксируются в таблице `audit_log` и дублируются в
+stdout (logger `app.audit`).
+
+| Событие | Когда пишется | `actor_id` |
+|---|---|---|
+| `user.created` | успешная регистрация | сам пользователь |
+| `auth.login.success` | успешный вход | пользователь |
+| `auth.login.failed` | неверный email или пароль | `NULL` |
+
+Для неудачного входа в `details` хранится причина: `{"reason": "unknown_email"}`
+или `{"reason": "invalid_password"}`. Повторная регистрация на занятый email
+в БД не пишется (транзакция откатывается), но оставляет warning в логе с
+`reason=duplicate_email`.
+
+Состав записи: `action`, `actor_id`, `target_user_id`, `email`, `ip_address`,
+`details` (JSON), `created_at`. Пароли и JWT не логируются.
+
+```sql
+SELECT created_at, action, actor_id, email, ip_address, details
+FROM audit_log
+ORDER BY id DESC
+LIMIT 20;
+```
+
+Пример строки в логе:
+
+```text
+2026-10-21 17:45:00,123 INFO app.audit: audit action=user.created actor_id=1 target_user_id=1 email=ivan.petrov@example.com ip=127.0.0.1
+```
+
+IP берётся из `request.client.host`; за reverse-proxy здесь будет адрес прокси,
+поэтому для реального IP нужен разбор `X-Forwarded-For` с доверенным списком.
+
+Событие `user.deleted` зарезервировано в `AuditAction`: ручка удаления пока не
+добавлена, но таблица готова хранить историю и после удаления пользователя
+(`actor_id` и `target_user_id` обнуляются по `ON DELETE SET NULL`).
+
 ## Тесты и покрытие
 
 Тесты юнит-уровня: вместо PostgreSQL используется SQLite в памяти, а зависимость
 `get_db` подменяется через `app.dependency_overrides`. Docker для тестов не нужен.
 Проверяются и успешные сценарии, и ошибки: неверный пароль, просроченный токен,
 токен с несуществующим пользователем, отсутствие заголовка `Authorization`,
-корректный срок жизни токена (`exp` и `expires_in`), а также разные хеши для
-одинаковых паролей (соль Argon2id).
+корректный срок жизни токена (`exp` и `expires_in`), разные хеши для
+одинаковых паролей (соль Argon2id), а также аудит: запись в БД, лог и
+отсутствие пароля/токена в событиях.
 
 ```bash
 uv run pytest                  # запуск + отчёт о покрытии
@@ -222,9 +265,10 @@ uv run black --check .
 app/
   config.py        # настройки (pydantic-settings), включая SECRET_KEY
   database.py      # движок, SessionLocal, зависимость get_db
-  models.py        # модель User (email, имя, хеш пароля)
+  models.py        # модели User и AuditLog (email, имя, хеш пароля)
   schemas.py       # Pydantic-схемы (с примерами для Swagger)
   security.py      # хеширование паролей (Argon2id) и выпуск/проверка JWT
+  audit.py         # события аудита: запись в БД и дублирование в stdout
   dependencies.py  # зависимость get_current_user (Bearer-токен)
   routers/
     users.py       # POST /users, GET /users/me, GET /users/{id}
@@ -232,7 +276,7 @@ app/
   main.py          # создание приложения, GET /health
 alembic/
   env.py           # окружение миграций (URL из настроек)
-  versions/        # миграции: users, затем hashed_password
+  versions/        # миграции: users, hashed_password, audit_log
 tests/             # юнит-тесты
 ```
 
@@ -256,3 +300,7 @@ tests/             # юнит-тесты
 7. **`get_current_user`** — зависимость FastAPI: достаёт токен из заголовка,
    декодирует его и загружает пользователя из БД. Если токен неверный или
    пользователь удалён, возвращается `401`.
+8. **Аудит** пишется в ту же транзакцию, что и действие: запись `user.created`
+   добавляется в сессию до `commit`, поэтому не бывает «пользователь создан,
+   а события нет». Для входа транзакция отдельная; неудачная попытка тоже
+   сохраняется, чтобы были видны попытки подбора.

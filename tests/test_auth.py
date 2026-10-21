@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -120,6 +121,42 @@ def test_login_without_password_returns_422(client: TestClient) -> None:
     response = client.post("/auth/login", data={"username": _USER["email"]})
 
     assert response.status_code == 422
+
+
+def test_login_upgrades_legacy_sha256_hash(
+    client: TestClient, user: dict[str, Any], db_session: Session
+) -> None:
+    """Старый SHA-256-хеш принимается и заменяется на Argon2id."""
+    stored = db_session.get(User, user["id"])
+    assert stored is not None
+    stored.hashed_password = hashlib.sha256(_USER["password"].encode("utf-8")).hexdigest()
+    db_session.commit()
+
+    response = client.post(
+        "/auth/login",
+        data={"username": _USER["email"], "password": _USER["password"]},
+    )
+
+    assert response.status_code == 200
+    db_session.refresh(stored)
+    assert stored.hashed_password.startswith("$argon2id$")
+
+
+def test_login_with_legacy_sha256_and_wrong_password_returns_401(
+    client: TestClient, user: dict[str, Any], db_session: Session
+) -> None:
+    """Неверный пароль к старому SHA-256-хешу не проходит."""
+    stored = db_session.get(User, user["id"])
+    assert stored is not None
+    stored.hashed_password = hashlib.sha256(b"other-password").hexdigest()
+    db_session.commit()
+
+    response = client.post(
+        "/auth/login",
+        data={"username": _USER["email"], "password": _USER["password"]},
+    )
+
+    assert response.status_code == 401
 
 
 # --- GET /users/me ---

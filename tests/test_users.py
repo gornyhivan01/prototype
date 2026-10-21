@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -37,16 +35,27 @@ def test_create_user_does_not_return_password(client: TestClient) -> None:
     assert "hashed_password" not in body
 
 
-def test_password_is_stored_as_sha256_hash(client: TestClient, db_session: Session) -> None:
-    """В базе лежит SHA-256-хеш (64 hex-символа), а не исходный пароль."""
+def test_password_is_stored_as_argon2id_hash(client: TestClient, db_session: Session) -> None:
+    """В базе лежит Argon2id-хеш, а не исходный пароль."""
     client.post("/users", json=_USER)
 
     user = db_session.scalar(select(User).where(User.email == _USER["email"]))
 
     assert user is not None
     assert user.hashed_password != _USER["password"]
-    assert len(user.hashed_password) == 64
-    assert user.hashed_password == hashlib.sha256(_USER["password"].encode("utf-8")).hexdigest()
+    assert user.hashed_password.startswith("$argon2id$")
+    assert len(user.hashed_password) <= 255
+
+
+def test_same_password_produces_different_hashes(client: TestClient, db_session: Session) -> None:
+    """Соль делает хеши одинаковых паролей разными."""
+    client.post("/users", json={**_USER, "email": "first@example.com"})
+    client.post("/users", json={**_USER, "email": "second@example.com"})
+
+    hashes = db_session.scalars(select(User.hashed_password)).all()
+
+    assert len(hashes) == 2
+    assert hashes[0] != hashes[1]
 
 
 def test_get_user_by_id(client: TestClient) -> None:

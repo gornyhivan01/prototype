@@ -33,7 +33,7 @@ class UserCreate(BaseModel):
     password: str = Field(
         min_length=8,
         max_length=128,
-        description="Пароль (8–128 символов); хранится только как SHA-256-хеш",
+        description="Пароль (8–128 символов); хранится только как Argon2id-хеш",
         examples=["secret123"],
     )
 

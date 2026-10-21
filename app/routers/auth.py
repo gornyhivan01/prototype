@@ -18,7 +18,7 @@ from app.examples import (
 )
 from app.models import User
 from app.schemas import Token
-from app.security import create_access_token, verify_password
+from app.security import create_access_token, hash_password, needs_rehash, verify_password
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -71,6 +71,13 @@ def login(
             detail="Неверный email или пароль",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    if needs_rehash(user.hashed_password):
+        # Прозрачная миграция: старый хеш (например, SHA-256) заменяется
+        # на Argon2id в момент успешного входа.
+        user.hashed_password = hash_password(form.password)
+        db.commit()
+
     return Token(
         access_token=create_access_token(subject=str(user.id)),
         expires_in=get_settings().access_token_expire_minutes * 60,

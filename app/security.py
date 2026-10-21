@@ -1,14 +1,9 @@
 """Пароли и JWT.
 
-Пароли хешируются SHA-256 (``hashlib``), access-токены — подписанные JWT
-(``PyJWT``, алгоритм HS256).
-
-.. warning::
-   SHA-256 — быстрый криптографический хеш, он **не предназначен для паролей**:
-   одинаковые пароли дают одинаковый хеш (соли нет), а высокая скорость
-   облегчает перебор и атаки по радужным таблицам. В продакшене используйте
-   Argon2id, bcrypt или PBKDF2 с большим числом итераций. Хеширование вынесено
-   в две функции, поэтому смена алгоритма не затрагивает остальной код.
+Пароли хешируются Argon2id через ``pwdlib``: у каждого пароля своя соль,
+а параметры (память, число итераций) подобраны так, чтобы перебор был дорогим.
+Хеширование вынесено в две функции, поэтому смена алгоритма не затрагивает
+остальной код.
 """
 
 from __future__ import annotations
@@ -19,22 +14,43 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import jwt
+from pwdlib import PasswordHash
+from pwdlib.exceptions import UnknownHashError
 
 from app.config import get_settings
 
+_password_hash = PasswordHash.recommended()
+
 
 def hash_password(password: str) -> str:
-    """Возвращает SHA-256-хеш пароля в hex-виде (64 символа)."""
-    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+    """Возвращает Argon2id-хеш пароля (соль генерируется автоматически)."""
+    return _password_hash.hash(password)
+
+
+def _looks_like_sha256(value: str) -> bool:
+    """Отличает хеш прежней версии (64 hex-символа) от Argon2id."""
+    return len(value) == 64 and all(char in "0123456789abcdef" for char in value)
 
 
 def verify_password(password: str, stored_hash: str) -> bool:
-    """Сравнивает пароль с сохранённым хешем за постоянное время.
+    """Проверяет пароль по сохранённому хешу.
 
-    ``hmac.compare_digest`` не зависит от того, на каком символе хеши
-    разошлись, поэтому не утекает информация о правильном префиксе.
+    Пустой или повреждённый хеш считается несовпадением, а не ошибкой сервера.
+    Хеши прежней версии (SHA-256) ещё принимаются — чтобы пользователи могли
+    войти и обновить хеш (см. :func:`needs_rehash`).
     """
-    return hmac.compare_digest(hash_password(password), stored_hash)
+    try:
+        return _password_hash.verify(password, stored_hash)
+    except UnknownHashError:
+        if _looks_like_sha256(stored_hash):
+            legacy_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
+            return hmac.compare_digest(legacy_hash, stored_hash)
+        return False
+
+
+def needs_rehash(stored_hash: str) -> bool:
+    """Возвращает ``True``, если хеш создан не Argon2id и его пора обновить."""
+    return not stored_hash.startswith("$argon2id$")
 
 
 def create_access_token(subject: str) -> str:

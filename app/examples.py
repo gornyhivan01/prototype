@@ -42,6 +42,7 @@ CREATE_USER_EXAMPLES: dict[str, Any] = {
 TOKEN_EXAMPLE: dict[str, Any] = {
     "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIn0.example-signature",
     "token_type": "bearer",
+    "expires_in": 1800,
 }
 
 # --- Примеры параметра пути (GET /users/{user_id}) ---

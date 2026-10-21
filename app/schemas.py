@@ -33,7 +33,7 @@ class UserCreate(BaseModel):
     password: str = Field(
         min_length=8,
         max_length=128,
-        description="Пароль (8–128 символов); хранится только как Argon2id-хеш",
+        description="Пароль (8–128 символов); хранится только как SHA-256-хеш",
         examples=["secret123"],
     )
 
@@ -54,3 +54,4 @@ class Token(BaseModel):
 
     access_token: str
     token_type: str = "bearer"  # noqa: S105 — имя поля по стандарту OAuth2
+    expires_in: int = Field(description="Срок жизни токена в секундах", examples=[1800])

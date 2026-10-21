@@ -8,9 +8,10 @@ from typing import Any
 import jwt
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.models import User
 
 _USER: dict[str, Any] = {
@@ -48,7 +49,7 @@ def _auth(token: str) -> dict[str, str]:
 
 
 def test_login_returns_bearer_token(client: TestClient, user: dict[str, Any]) -> None:
-    """Верный пароль даёт access-токен с идентификатором пользователя."""
+    """Верный пароль даёт access-токен с идентификатором и сроком жизни."""
     response = client.post(
         "/auth/login",
         data={"username": _USER["email"], "password": _USER["password"]},
@@ -57,12 +58,22 @@ def test_login_returns_bearer_token(client: TestClient, user: dict[str, Any]) ->
     assert response.status_code == 200
     body = response.json()
     assert body["token_type"] == "bearer"  # noqa: S105 — имя поля по стандарту OAuth2
+    expected_lifetime = get_settings().access_token_expire_minutes * 60
+    assert body["expires_in"] == expected_lifetime
+
     payload = jwt.decode(
         body["access_token"],
         get_settings().secret_key,
         algorithms=[get_settings().jwt_algorithm],
     )
     assert payload["sub"] == str(user["id"])
+    assert payload["exp"] - payload["iat"] == expected_lifetime
+
+
+def test_token_lifetime_must_be_positive() -> None:
+    """Нулевой или отрицательный срок жизни токена запрещён настройками."""
+    with pytest.raises(ValidationError):
+        Settings(access_token_expire_minutes=0)
 
 
 def test_login_with_wrong_password_returns_401(client: TestClient, user: dict[str, Any]) -> None:

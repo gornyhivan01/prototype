@@ -9,6 +9,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.database import get_db
 from app.examples import (
     INVALID_CREDENTIALS_RESPONSE,
@@ -44,6 +45,10 @@ curl -X POST http://localhost:8000/auth/login \\
 
 Неверный email и неверный пароль дают одинаковый ответ `401`, чтобы нельзя было
 проверить существование пользователя.
+
+**Время жизни.** Токен действует `ACCESS_TOKEN_EXPIRE_MINUTES` минут (по
+умолчанию 30). Срок записан в claim `exp`; после него сервер вернёт `401`, и
+нужно войти заново. Ответ содержит `expires_in` — тот же срок в секундах.
 """,
     responses={
         200: {
@@ -66,4 +71,7 @@ def login(
             detail="Неверный email или пароль",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return Token(access_token=create_access_token(subject=str(user.id)))
+    return Token(
+        access_token=create_access_token(subject=str(user.id)),
+        expires_in=get_settings().access_token_expire_minutes * 60,
+    )

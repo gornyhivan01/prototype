@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,7 +30,9 @@ class Settings(BaseSettings):
     # python -c "import secrets; print(secrets.token_urlsafe(32))"
     secret_key: str = "dev-secret-key-change-me-0123456789abcdef"  # noqa: S105
     jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 30
+    # Больше нуля: токен с нулевым сроком жизни бесполезен, отрицательный —
+    # сразу просрочен. Значение можно переопределить через .env.
+    access_token_expire_minutes: int = Field(default=30, gt=0)
 
 
 @lru_cache

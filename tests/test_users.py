@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -35,15 +37,16 @@ def test_create_user_does_not_return_password(client: TestClient) -> None:
     assert "hashed_password" not in body
 
 
-def test_password_is_stored_as_argon2id_hash(client: TestClient, db_session: Session) -> None:
-    """В базе лежит Argon2id-хеш, а не исходный пароль."""
+def test_password_is_stored_as_sha256_hash(client: TestClient, db_session: Session) -> None:
+    """В базе лежит SHA-256-хеш (64 hex-символа), а не исходный пароль."""
     client.post("/users", json=_USER)
 
     user = db_session.scalar(select(User).where(User.email == _USER["email"]))
 
     assert user is not None
     assert user.hashed_password != _USER["password"]
-    assert user.hashed_password.startswith("$argon2id$")
+    assert len(user.hashed_password) == 64
+    assert user.hashed_password == hashlib.sha256(_USER["password"].encode("utf-8")).hexdigest()
 
 
 def test_get_user_by_id(client: TestClient) -> None:

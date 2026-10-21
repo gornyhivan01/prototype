@@ -13,16 +13,19 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.dependencies import CurrentUser
 from app.examples import (
     CONFLICT_RESPONSE,
     CREATE_USER_EXAMPLES,
     NOT_FOUND_RESPONSE,
+    UNAUTHORIZED_RESPONSE,
     USER_CREATED_EXAMPLE,
     USER_ID_EXAMPLES,
     VALIDATION_RESPONSE,
 )
 from app.models import User
 from app.schemas import UserCreate, UserRead
+from app.security import hash_password
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -38,12 +41,15 @@ DbSession = Annotated[Session, Depends(get_db)]
     summary="Создать пользователя",
     description="""Создаёт пользователя и сохраняет его в PostgreSQL.
 
+Пароль принимается в открытом виде только в этом запросе и сразу превращается
+в Argon2id-хеш — в базе и в ответах API пароля нет.
+
 **Пример запроса:**
 
 ```bash
 curl -X POST http://localhost:8000/users \\
   -H 'Content-Type: application/json' \\
-  -d '{"email": "ivan.petrov@example.com", "full_name": "Иван Петров"}'
+  -d '{"email": "ivan.petrov@example.com", "full_name": "Иван Петров", "password": "secret123"}'
 ```
 
 Поле `email` должно быть уникальным: повторная отправка того же адреса вернёт `409`.
@@ -62,7 +68,11 @@ def create_user(
     db: DbSession,
 ) -> User:
     """Создаёт пользователя; email должен быть уникальным."""
-    user = User(email=payload.email, full_name=payload.full_name)
+    user = User(
+        email=payload.email,
+        full_name=payload.full_name,
+        hashed_password=hash_password(payload.password),
+    )
     db.add(user)
     try:
         db.commit()
@@ -74,6 +84,35 @@ def create_user(
         ) from None
     db.refresh(user)
     return user
+
+
+@router.get(
+    "/me",
+    response_model=UserRead,
+    summary="Текущий пользователь",
+    description="""Возвращает пользователя, которому принадлежит access-токен.
+
+Ручка защищена: нужен заголовок `Authorization: Bearer <token>`, который
+выдаёт `POST /auth/login`. В Swagger UI токен подставляется после нажатия
+**Authorize**.
+
+**Пример запроса:**
+
+```bash
+curl http://localhost:8000/users/me -H 'Authorization: Bearer <token>'
+```
+""",
+    responses={
+        200: {
+            "description": "Пользователь найден",
+            "content": {"application/json": {"example": USER_CREATED_EXAMPLE}},
+        },
+        401: UNAUTHORIZED_RESPONSE,
+    },
+)
+def read_current_user(current_user: CurrentUser) -> User:
+    """Возвращает владельца access-токена."""
+    return current_user
 
 
 @router.get(

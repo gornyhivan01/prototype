@@ -3,8 +3,16 @@
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-_USER = {"email": "ivan.petrov@example.com", "full_name": "Иван Петров"}
+from app.models import User
+
+_USER = {
+    "email": "ivan.petrov@example.com",
+    "full_name": "Иван Петров",
+    "password": "secret123",
+}
 
 
 def test_create_user_returns_created_user(client: TestClient) -> None:
@@ -17,6 +25,25 @@ def test_create_user_returns_created_user(client: TestClient) -> None:
     assert body["email"] == _USER["email"]
     assert body["full_name"] == _USER["full_name"]
     assert "created_at" in body
+
+
+def test_create_user_does_not_return_password(client: TestClient) -> None:
+    """Пароль и его хеш не попадают в ответ API."""
+    body = client.post("/users", json=_USER).json()
+
+    assert "password" not in body
+    assert "hashed_password" not in body
+
+
+def test_password_is_stored_as_argon2id_hash(client: TestClient, db_session: Session) -> None:
+    """В базе лежит Argon2id-хеш, а не исходный пароль."""
+    client.post("/users", json=_USER)
+
+    user = db_session.scalar(select(User).where(User.email == _USER["email"]))
+
+    assert user is not None
+    assert user.hashed_password != _USER["password"]
+    assert user.hashed_password.startswith("$argon2id$")
 
 
 def test_get_user_by_id(client: TestClient) -> None:
@@ -49,14 +76,30 @@ def test_duplicate_email_returns_409(client: TestClient) -> None:
 
 def test_invalid_email_returns_422(client: TestClient) -> None:
     """Некорректный email отклоняется валидацией."""
-    response = client.post("/users", json={"email": "not-an-email", "full_name": "Иван"})
+    response = client.post(
+        "/users",
+        json={"email": "not-an-email", "full_name": "Иван", "password": "secret123"},
+    )
 
     assert response.status_code == 422
 
 
 def test_empty_full_name_returns_422(client: TestClient) -> None:
     """Пустое имя отклоняется валидацией."""
-    response = client.post("/users", json={"email": "a@example.com", "full_name": ""})
+    response = client.post(
+        "/users",
+        json={"email": "a@example.com", "full_name": "", "password": "secret123"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_short_password_returns_422(client: TestClient) -> None:
+    """Пароль короче 8 символов отклоняется валидацией."""
+    response = client.post(
+        "/users",
+        json={"email": "a@example.com", "full_name": "Иван", "password": "short"},
+    )
 
     assert response.status_code == 422
 

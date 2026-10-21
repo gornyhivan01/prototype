@@ -3,14 +3,16 @@
 [![CI](https://github.com/gornyhivan01/prototype/actions/workflows/ci.yml/badge.svg)](https://github.com/gornyhivan01/prototype/actions/workflows/ci.yml)
 
 Для знакомства с **FastAPI**, **PostgreSQL** и **Alembic**.
-Три ручки, одна миграция и юнит-тесты.
+Пять ручек, две миграции, аутентификация по паролю с JWT и юнит-тесты.
 
 ## Что внутри
 
 | Ручка | Назначение |
 |---|---|
 | `GET /health` | Проверка, что сервис жив |
-| `POST /users` | Создание пользователя (запись в PostgreSQL) |
+| `POST /users` | Создание пользователя (пароль сохраняется как Argon2id-хеш) |
+| `POST /auth/login` | Вход по email и паролю, выдача JWT |
+| `GET /users/me` | Текущий пользователь (защищена, нужен JWT) |
 | `GET /users/{id}` | Просмотр пользователя (чтение из PostgreSQL) |
 
 Автоматические **Swagger UI** (`/docs`) и **OpenAPI** (`/openapi.json`).
@@ -21,6 +23,8 @@
 - SQLAlchemy 2.0 (синхронный) + драйвер `psycopg2`
 - Alembic (миграции)
 - PostgreSQL 16 (Docker Compose, порт **5433**)
+- Пароли: Argon2id через `pwdlib`
+- Токены: JWT (HS256) через `PyJWT`
 - Тесты: pytest + pytest-cov, SQLite в памяти
 
 ## Быстрый старт
@@ -48,7 +52,44 @@ uv run uvicorn app.main:app --reload
 
 В Swagger UI у каждой ручки приведены примеры на русском: описание с командой
 `curl`, готовые примеры тела запроса, а также примеры успешных ответов и ошибок
-(`404`, `409`, `422`).
+(`401`, `404`, `409`, `422`).
+
+## Аутентификация
+
+1. **Регистрация.** `POST /users` принимает пароль (8–128 символов) и сохраняет
+   только его Argon2id-хеш. В ответе и в базе исходного пароля нет.
+2. **Вход.** `POST /auth/login` проверяет email и пароль и возвращает
+   `access_token` (JWT) со сроком жизни `ACCESS_TOKEN_EXPIRE_MINUTES`.
+3. **Защищённая ручка.** `GET /users/me` читает заголовок
+   `Authorization: Bearer <token>`, проверяет подпись и срок действия и
+   возвращает владельца токена.
+
+В Swagger UI удобно так: создайте пользователя, нажмите **Authorize**, введите
+email в поле *username* и пароль — токен подставится в запросы автоматически.
+
+```bash
+# Регистрация
+curl -X POST http://localhost:8000/users \
+  -H "Content-Type: application/json" \
+  -d '{"email": "ivan.petrov@example.com", "full_name": "Иван Петров", "password": "secret123"}'
+
+# Вход (форма OAuth2: username — это email)
+curl -X POST http://localhost:8000/auth/login \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=ivan.petrov@example.com&password=secret123"
+
+# Защищённая ручка
+curl http://localhost:8000/users/me -H "Authorization: Bearer <token>"
+```
+
+Пароль и токен — разные вещи: пароль проверяется один раз и не хранится в
+открытом виде, а JWT клиент отправляет в каждом запросе. Подпись токена
+проверяется ключом `SECRET_KEY`: без него токен не подделать, но и сервис не
+запустится с чужим ключом.
+
+> **Важно:** значение `SECRET_KEY` по умолчанию подходит только для локального
+> запуска. В продакшене задайте случайную строку не короче 32 символов:
+> `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
 
 ## Проверка ручек
 
@@ -57,7 +98,7 @@ curl http://localhost:8000/health
 
 curl -X POST http://localhost:8000/users \
   -H "Content-Type: application/json" \
-  -d '{"email": "ivan.petrov@example.com", "full_name": "Иван Петров"}'
+  -d '{"email": "ivan.petrov@example.com", "full_name": "Иван Петров", "password": "secret123"}'
 
 curl http://localhost:8000/users/1
 ```
@@ -66,6 +107,8 @@ curl http://localhost:8000/users/1
 
 Тесты юнит-уровня: вместо PostgreSQL используется SQLite в памяти, а зависимость
 `get_db` подменяется через `app.dependency_overrides`. Docker для тестов не нужен.
+Проверяются и успешные сценарии, и ошибки: неверный пароль, просроченный токен,
+токен с несуществующим пользователем, отсутствие заголовка `Authorization`.
 
 ```bash
 uv run pytest                  # запуск + отчёт о покрытии
@@ -83,26 +126,36 @@ uv run black --check .
 
 ```
 app/
-  config.py      # настройки (pydantic-settings)
-  database.py    # движок, SessionLocal, зависимость get_db
-  models.py      # модель User
-  schemas.py     # Pydantic-схемы (с примерами для Swagger)
+  config.py        # настройки (pydantic-settings), включая SECRET_KEY
+  database.py      # движок, SessionLocal, зависимость get_db
+  models.py        # модель User (email, имя, хеш пароля)
+  schemas.py       # Pydantic-схемы (с примерами для Swagger)
+  security.py      # хеширование паролей и выпуск/проверка JWT
+  dependencies.py  # зависимость get_current_user (Bearer-токен)
   routers/
-    users.py     # POST /users, GET /users/{id}
-  main.py        # создание приложения, GET /health
+    users.py       # POST /users, GET /users/me, GET /users/{id}
+    auth.py        # POST /auth/login
+  main.py          # создание приложения, GET /health
 alembic/
-  env.py         # окружение миграций (URL из настроек)
-  versions/      # миграции
-tests/           # юнит-тесты
+  env.py           # окружение миграций (URL из настроек)
+  versions/        # миграции: users, затем hashed_password
+tests/             # юнит-тесты
 ```
 
 ## Для понимания
 
 1. **FastAPI** собирает приложение в `app/main.py`, а ручки вынесены в
-   `app/routers/users.py` через `APIRouter`.
+   `app/routers/users.py` и `app/routers/auth.py` через `APIRouter`.
 2. **SQLAlchemy** описывает таблицу классом `User` (`app/models.py`).
    Схема БД создаётся **не** автоматически, а миграцией Alembic, изменения схемы версионируются.
 3. **Alembic** читает строку подключения из настроек приложения (`app/config.py`),
    поэтому `DATABASE_URL` — единственный источник.
 4. **Зависимость `get_db`** открывает и закрывает сессию на каждый запрос; в
    тестах она подменяется, что изолирует тесты от реальной БД.
+5. **Пароли** хешируются Argon2id: у каждого пароля своя соль, поэтому одинаковые
+   пароли дают разные хеши, а восстановить исходный пароль из хеша нельзя.
+6. **JWT** — подписанный токен с полями `sub` (id пользователя), `iat` и `exp`.
+   Сервер не хранит сессии: при каждом запросе он проверяет подпись и срок.
+7. **`get_current_user`** — зависимость FastAPI: достаёт токен из заголовка,
+   декодирует его и загружает пользователя из БД. Если токен неверный или
+   пользователь удалён, возвращается `401`.

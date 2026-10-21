@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg2://app:app@localhost:5433/app"
     debug: bool = False
 
+    # --- JWT ---
+    # В продакшене SECRET_KEY обязателен и должен быть случайным (>= 32 символов):
+    # python -c "import secrets; print(secrets.token_urlsafe(32))"
+    secret_key: str = "dev-secret-key-change-me-0123456789abcdef"  # noqa: S105
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 30
+
 
 @lru_cache
 def get_settings() -> Settings:

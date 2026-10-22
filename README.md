@@ -47,8 +47,8 @@ uv sync
 # 2. Конфигурация
 cp .env.example .env
 
-# 3. PostgreSQL
-docker compose up -d postgres
+# 3. База данных и Keycloak (для SSO)
+docker compose up -d postgres keycloak
 
 # 4. Миграции
 uv run alembic upgrade head
@@ -103,7 +103,7 @@ email в поле *username* и пароль — токен подставитс
 
 ## SSO через Keycloak
 
-Вход «в один клик» через **Keycloak** (`docker compose up -d keycloak`).
+Вход «в один клик» через **Keycloak** (`docker compose up -d`).
 Схема — **гибридная**: Keycloak только аутентифицирует пользователя, а сервис
 после успешного входа выпускает **свой** JWT, как при парольном входе. Поэтому
 ручки и `app.dependencies` не менялись: `Authorization: Bearer <token>` работает

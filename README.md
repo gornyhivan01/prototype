@@ -159,6 +159,78 @@ uv run uvicorn app.main:app --reload
 токены IdP напрямую) — следующий шаг; тогда готовится refresh-сессии и
 single logout.
 
+## Примеры использования (SSO)
+
+### 1. Вход через браузер
+
+Откройте в браузере:
+
+```
+http://localhost:8000/auth/sso/start
+```
+
+Цепочка: наш сервис редиректит в Keycloak (`/realms/prototype/protocol/
+openid-connect/auth`), Keycloak показывает форму входа (`login-actions/
+authenticate?…`), после входа возвращает браузер на
+`/auth/sso/callback?code=…&state=…`, и сервис показывает страницу с JWT.
+Скопируйте токен → **Swagger** (`/docs`) → **Authorize** → вставьте без слова
+`Bearer` (или добавьте его в `curl`, см. ниже).
+
+### 2. Учётные данные Keycloak
+
+| Источник | email | password |
+|---|---|---|
+| Скрипт `scripts/keycloak-bootstrap.py` | `sso.user@example.com` | `password123` |
+| Admin-консоль (`http://localhost:8080`, admin/admin) → **Users** | любой | задаётся при создании / Reset Password |
+
+Пароль проверяет **сам Keycloak** (у него свой Argon2), наш сервис пароли SSO
+не знает и не хранит.
+
+### 3. Использование токена SSO в API
+
+```bash
+# 1. Токен получен на странице callback — сохраните его в переменную:
+TOKEN="eyJhbGciOiJIUzI1NiIsInR5…"
+
+# 2. Защищённая ручка:
+curl -s http://localhost:8000/users/me -H "Authorization: Bearer $TOKEN"
+# {"id":1,"email":"sso.user@example.com","full_name":"SSO User","created_at":"..."}
+```
+
+Парольный вход работает так же (`POST /auth/login`) и тоже выдаёт JWT —
+дальше токены взаимозаменяемы.
+
+### 4. Ошибки и что они значат
+
+| Что видите | Где | Причина | Решение |
+|---|---|---|---|
+| **`Invalid username or password.`** | форма входа Keycloak (`login-actions/authenticate`) | такого пользователя нет в реалме `prototype` (регистрация отключена) либо неверный пароль | ввести `sso.user@example.com` / `password123`, либо создать/сбросить пользователя в admin-консоли Keycloak |
+| **`400` — «Сессия SSO не найдена или истекла»** | `/auth/sso/callback` | `state` истёк (10 минут) или callback открыт вручную, без перехода через `/auth/sso/start` | заново открыть `/auth/sso/start` |
+| **`400` — «Не удалось войти через SSO»** | `/auth/sso/callback` | `id_token` не прошёл проверку (подпись/JWKS или claims `iss`/`aud`/`exp`/`nonce`) | сверить `KEYCLOAK_URL`, `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET` с реалмом; подробности — в логе uvicorn |
+| **`401` — «Не удалось проверить токен»** | `/users/*` | нет или просрочен JWT | получить свежий токен (SSO или `/auth/login`) |
+| **`403` — «Парольный вход отключён»** | `/auth/login` | `SSO_ONLY=true` | входить только через `/auth/sso/start` |
+
+### Почему Keycloak пишет «Invalid username or password»?
+
+Страница `…/login-actions/authenticate?execution=…&client_id=prototype-web&
+tab_id=…&client_data=…` — это **стандартная форма входа Keycloak** для реалма
+`prototype`. `client_data` здесь — наш закодированный `redirect_uri`
+(перенаправление обратно в сервис), к ошибке он не относится.
+
+Наш FastAPI-сервис к этому моменту ещё не подключён: Keycloak сам проверяет
+логин и пароль **против пользователей своего реалма**. По умолчанию
+регистрация отключена (`registrationAllowed=false` в
+`keycloak/realm-export.json`), поэтому произвольный email не пройдёт — сначала
+нужно создать пользователя:
+
+```bash
+# тестовый пользователь уже есть после:
+uv run python scripts/keycloak-bootstrap.py
+
+# или вручную: http://localhost:8080 (admin/admin) → Users → Add user →
+#    → Set password (Temporary: OFF)
+```
+
 ## Проверка
 
 ### 1. Сервис жив

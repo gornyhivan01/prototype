@@ -3,7 +3,8 @@
 [![CI](https://github.com/gornyhivan01/prototype/actions/workflows/ci.yml/badge.svg)](https://github.com/gornyhivan01/prototype/actions/workflows/ci.yml)
 
 Для знакомства с **FastAPI**, **PostgreSQL** и **Alembic**.
-Пять ручек, три миграции, аутентификация по паролю с JWT, аудит и юнит-тесты.
+Семь ручек, три миграции, аутентификация по паролю с JWT, **SSO через Keycloak
+(OIDC)**, аудит и юнит-тесты.
 
 ## Что внутри
 
@@ -12,6 +13,8 @@
 | `GET /health` | Проверка, что сервис жив |
 | `POST /users` | Создание пользователя (пароль сохраняется как Argon2id-хеш) |
 | `POST /auth/login` | Вход по email и паролю, выдача JWT |
+| `GET /auth/sso/start` | Вход через SSO: редирект в Keycloak (state + nonce + PKCE) |
+| `GET /auth/sso/callback` | Callback Keycloak: обмен кода на токены, проверка `id_token`, выпуск своего JWT |
 | `GET /users/me` | Текущий пользователь (защищена, нужен JWT) |
 | `GET /users/{id}` | Просмотр пользователя (чтение из PostgreSQL) |
 
@@ -28,7 +31,12 @@
 - PostgreSQL 16 (Docker Compose, порт **5433**)
 - Пароли: Argon2id через `pwdlib`
 - Токены: JWT (HS256) через `PyJWT`
-- Тесты: pytest + pytest-cov, SQLite в памяти
+- **SSO: Keycloak 26 (OIDC/OAuth2, Authorization Code + PKCE S256)** —
+  `docker compose up -d keycloak`, реалм импортируется из
+  `keycloak/realm-export.json`; проверка `id_token` по JWKS (RS256), кэш ключей
+- HTTP-клиент для SSO: `httpx`; PKCE и валидация токенов — собственный код в
+  `app/sso.py`
+- Тесты: pytest + pytest-cov, SQLite в памяти; OpenID-проверки — с фейковым JWKS
 
 ## Быстрый старт
 

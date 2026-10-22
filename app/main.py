@@ -35,6 +35,11 @@ app = FastAPI(
 `POST /auth/login` выдаёт JWT (access-токен), а `GET /users/me` принимает его
 в заголовке `Authorization: Bearer <token>`.
 
+**SSO через Keycloak:** вход «в один клик» через `GET /auth/sso/start` —
+браузер перенаправляется в Keycloak (`http://localhost:8080`), а после входа
+сервис выпускает свой JWT. Парольный вход при этом продолжает работать
+(гибридная схема); отключить его можно переменной `SSO_ONLY=true`.
+
 **Аудит:** создание пользователя и попытки входа пишутся в таблицу
 `audit_log` и дублируются в stdout. Пароли и токены в аудит не попадают.
 
@@ -52,13 +57,15 @@ app = FastAPI(
 | GET | `/health` | Проверка, что сервис жив |
 | POST | `/users` | Создание пользователя (запись в PostgreSQL) |
 | POST | `/auth/login` | Вход по email и паролю, выдача JWT |
+| GET | `/auth/sso/start` | Вход через SSO (Keycloak), редирект в IdP |
+| GET | `/auth/sso/callback` | Callback Keycloak: обмен кода на свой JWT |
 | GET | `/users/me` | Текущий пользователь (нужен JWT) |
 | GET | `/users/{user_id}` | Просмотр пользователя (чтение из PostgreSQL) |
 """,
     openapi_tags=[
         {"name": "service", "description": "Служебные ручки: проверка живости сервиса."},
         {"name": "users", "description": "Создание и просмотр пользователей в PostgreSQL."},
-        {"name": "auth", "description": "Аутентификация по паролю и выдача JWT."},
+        {"name": "auth", "description": "Аутентификация: по паролю и через SSO (Keycloak)."},
     ],
 )
 

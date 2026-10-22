@@ -93,6 +93,72 @@ email в поле *username* и пароль — токен подставитс
 
 Пошаговые команды с ожидаемыми ответами — в разделе [«Проверка»](#проверка).
 
+## SSO через Keycloak
+
+Вход «в один клик» через **Keycloak** (`docker compose up -d keycloak`).
+Схема — **гибридная**: Keycloak только аутентифицирует пользователя, а сервис
+после успешного входа выпускает **свой** JWT, как при парольном входе. Поэтому
+ручки и `app.dependencies` не менялись: `Authorization: Bearer <token>` работает
+как раньше.
+
+```
+Браузер ── GET /auth/sso/start (state+nonce+PKCE) ── 302 ─► Keycloak (:8080)
+   ▲                                                      │ вход/регистрация
+   │                                                      ▼
+   │◄──────────── /auth/sso/callback (code + state) ──────┤
+   │  code → /token (PKCE) → проверка id_token (RS256/JWKS,
+   │  iss/aud/exp/nonce) → поиск пользователя по email │
+   └───────────────────► свой JWT (страница с токеном) ───┘
+```
+
+**Запуск:**
+
+```bash
+# 1. Keycloak + PostgreSQL
+docker compose up -d
+
+# 2. Тестовый пользователь SSO (sso.user@example.com / password123)
+uv run python scripts/keycloak-bootstrap.py
+
+# 3. Сервис (как обычно)
+uv run alembic upgrade head
+uv run uvicorn app.main:app --reload
+```
+
+**Вход:** откройте http://localhost:8000/auth/sso/start — Keycloak попросит
+учётку, после входа сервис покажет страницу с JWT и ссылку на Swagger.
+
+**Что внутри (при желании изучить):**
+
+- `app/sso.py` — OIDC-клиент: discovery, PKCE S256, обмен кода, проверка
+  id_token (RS256 по JWKS через `PyJWKClient`, `iss`/`aud`/`exp`/`iat`/`nonce`,
+  кэш ключей). Без сторонних OIDC-библиотек — только `httpx` и `pyjwt`.
+- `keycloak/realm-export.json` — реалм `prototype` и клиент `prototype-web`
+  (confidential, Authorization Code + PKCE), импортируются при старте
+  (`--import-realm`).
+- `scripts/keycloak-bootstrap.py` — создание тестового пользователя через
+  Admin REST API (идемпотентно).
+- `app/routers/auth.py::sso_start/sso_callback` — эндпоинты потока.
+
+**Параметры (`.env`, все опциональны):**
+
+| Переменная | По умолчанию | Назначение |
+|---|---|---|
+| `SSO_ENABLED` | `true` | Включает `/auth/sso/start` |
+| `SSO_ONLY` | `false` | `true` → парольный `/auth/login` возвращает `403` |
+| `KEYCLOAK_URL` | `http://localhost:8080` | Адрес IdP |
+| `KEYCLOAK_REALM` | `prototype` | Реалм |
+| `KEYCLOAK_CLIENT_ID` / `KEYCLOAK_CLIENT_SECRET` | `prototype-web` / `prototype-web-secret` | Клиент (confidential) |
+| `SSO_REDIRECT_URI` | `http://localhost:8000/auth/sso/callback` | Куда Keycloak вернёт браузер |
+
+**Админ-консоль Keycloak:** http://localhost:8080, `admin` / `admin`
+(создание пользователей, групп и ролей, брокеринг внешних IdP).
+
+**Границы схемы (осознанно):** `state`/`nonce`/verifier хранятся в памяти
+процесса — для одного uvicorn-воркера. Полная федерация (сервис принимает
+токены IdP напрямую) — следующий шаг; тогда готовится refresh-сессии и
+single logout.
+
 ## Проверка
 
 ### 1. Сервис жив

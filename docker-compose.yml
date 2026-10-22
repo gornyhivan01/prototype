@@ -16,5 +16,30 @@ services:
       timeout: 3s
       retries: 10
 
+  # Identity Provider (OIDC) для SSO-входа.
+  # Админ-консоль: http://localhost:8080  (admin / admin)
+  # Реализация "гибридного" SSO: токены выпускает уже сам сервис,
+  # Keycloak здесь только аутентифицирует пользователя.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.1
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      # Реалм "prototype" и клиент "prototype-web" импортируются при старте
+      # из файла keycloak/realm-export.json.
+    ports:
+      # Снаружи 8080, чтобы не конфликтовать с API-сервисом на 8000.
+      - "8080:8080"
+    volumes:
+      - keycloak_data:/opt/keycloak/data
+      # bind-маунт файла реалма поверх тома: файл остаётся читаемым
+      # при каждом старте, --import-realm пропускает уже существующие реалмы.
+      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   prakt_pgdata:
+  keycloak_data:

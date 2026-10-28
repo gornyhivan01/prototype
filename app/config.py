@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     # Куда Keycloak вернёт после single logout. Должен быть в списке
     # postLogoutRedirectUris клиента (keycloak/realm-export.json).
     sso_post_logout_redirect_uri: str = "http://localhost:8000/"
+    # Учётка админа Keycloak для Admin REST (создание/удаление пользователей
+    # синхронно с SSO). Только для разработки; задаётся через .env.
+    keycloak_admin_user: str = "admin"
+    keycloak_admin_password: str = "admin"  # noqa: S105 — dev-админ Keycloak (docker-compose)
 
 
 @lru_cache

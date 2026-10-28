@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app import kc_admin
 from app.audit import AuditAction, add_entry, log_entry, log_rejection
 from app.database import get_db
 from app.dependencies import AdminUser, CurrentUser
@@ -30,6 +31,7 @@ from app.examples import (
     USER_ID_EXAMPLES,
     VALIDATION_RESPONSE,
 )
+from app.kc_admin import KeycloakAdminError
 from app.models import ROLE_ADMIN, User
 from app.schemas import UserCreate, UserRead
 from app.security import hash_password
@@ -49,7 +51,12 @@ DbSession = Annotated[Session, Depends(get_db)]
     description="""Создаёт пользователя и сохраняет его в PostgreSQL.
 
 Ручка защищена RBAC: доступна только пользователю с ролью `admin`. Роль
-задаётся полем `role` (по умолчанию `user`).
+задаётся полем `role` (по умолчанию `user`). Пользователь **синхронно
+создаётся и в Keycloak** (SSO): той же почтой и паролем, ролью `admin`
+выдаётся realm-роль `admin` — поэтому вход по `Войти через SSO` будет работать.
+
+Если Keycloak недоступен, создание отменяется целиком — вернётся `503`,
+чтобы не было «полупользователей» (в БД, но не в SSO).
 
 Пароль принимается в открытом виде только в этом запросе и сразу превращается
 в Argon2id-хеш — в базе и в ответах API пароля нет.
@@ -83,7 +90,7 @@ def create_user(
     request: Request,
     admin: AdminUser,
 ) -> User:
-    """Создаёт пользователя; email должен быть уникальным."""
+    """Создаёт пользователя (в БД и в Keycloak); email должен быть уникальным."""
     user = User(
         email=payload.email,
         full_name=payload.full_name,
@@ -93,15 +100,6 @@ def create_user(
     db.add(user)
     try:
         db.flush()  # получаем id и проверяем уникальность email
-        entry = add_entry(
-            db,
-            action=AuditAction.USER_CREATED,
-            actor_id=admin.id,
-            target_user_id=user.id,
-            email=user.email,
-            request=request,
-        )
-        db.commit()
     except IntegrityError:
         db.rollback()
         log_rejection(
@@ -114,6 +112,38 @@ def create_user(
             status_code=status.HTTP_409_CONFLICT,
             detail="Пользователь с таким email уже существует",
         ) from None
+
+    # Синхронизация с Keycloak (SSO). Если IdP недоступен — откатываем всё,
+    # чтобы не оставить пользователя без возможности SSO-входа.
+    try:
+        kc_admin.create_keycloak_user(
+            email=payload.email,
+            password=payload.password,
+            full_name=user.full_name,
+            role=user.role,
+        )
+    except KeycloakAdminError as exc:
+        db.rollback()
+        log_rejection(
+            action=AuditAction.USER_CREATED.value,
+            email=payload.email,
+            request=request,
+            reason=f"keycloak_sync_failed:{exc}",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Не удалось создать учётку SSO — пользователь не создан",
+        ) from None
+
+    entry = add_entry(
+        db,
+        action=AuditAction.USER_CREATED,
+        actor_id=admin.id,
+        target_user_id=user.id,
+        email=user.email,
+        request=request,
+    )
+    db.commit()
     db.refresh(user)
     log_entry(entry)
     return user
@@ -240,6 +270,8 @@ def read_user(
 
 Ручка защищена RBAC: доступна только пользователю с ролью `admin`.
 Удалить собственную учётку нельзя — это защита от блокировки самого себя.
+Учётка так же удаляется из Keycloak (SSO); если IdP недоступен — вернётся
+`503` и ничего не будет удалено.
 Записи аудита этого пользователя сохраняются (FK `ON DELETE SET NULL`),
 удаляется только сам пользователь.
 
@@ -280,6 +312,16 @@ def delete_user(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Нельзя удалить собственную учётку",
         )
+
+    # Сначала синхронизация с Keycloak (SSO): не удаляем локально, если
+    # IdP не дал удалить учётку, — иначе SSO-учётка останется бесхозной.
+    try:
+        kc_admin.delete_keycloak_user(user.email)
+    except KeycloakAdminError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Не удалось удалить учётку SSO — пользователь не удалён",
+        ) from exc
 
     entry = add_entry(
         db,

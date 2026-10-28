@@ -117,3 +117,15 @@ def user_headers(client: TestClient, db_session: Session) -> dict[str, str]:
     """Заголовок Authorization обычного пользователя."""
     _make_user(db_session)
     return _token_headers(client, _USER_EMAIL, _USER_PASSWORD)
+
+
+@pytest.fixture(autouse=True)
+def _keycloak_sync_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """В юнит-тестах не ходим в реальный Keycloak (Admin REST выключен).
+
+    Отдельные тесты синхронизации переопределяют эти функции.
+    """
+    import app.kc_admin as kc
+
+    monkeypatch.setattr(kc, "create_keycloak_user", lambda *args, **kwargs: None)
+    monkeypatch.setattr(kc, "delete_keycloak_user", lambda *args, **kwargs: None)

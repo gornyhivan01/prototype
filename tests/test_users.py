@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -271,3 +274,96 @@ def test_delete_unknown_user_returns_404(client: TestClient, admin_headers: dict
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Пользователь не найден"
+
+
+# --- Синхронизация учёток с Keycloak (SSO) ---
+
+
+def test_admin_create_syncs_user_to_keycloak(
+    client: TestClient, admin_headers: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Создание пользователя админом заводит учётку и в Keycloak."""
+    import app.kc_admin as kc
+
+    calls: list[tuple[str, str]] = []
+
+    def fake_create(email: str, password: str, full_name: str, role: str) -> None:
+        calls.append((email, role))
+
+    monkeypatch.setattr(kc, "create_keycloak_user", fake_create)
+
+    response = client.post("/users", json=_USER, headers=admin_headers)
+
+    assert response.status_code == 201
+    assert calls == [(_USER["email"], "user")]
+
+
+def test_admin_create_syncs_admin_role_to_keycloak(
+    client: TestClient, admin_headers: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Пользователь с ролью admin получает её и в Keycloak."""
+    import app.kc_admin as kc
+
+    calls: list[tuple[str, str]] = []
+
+    def fake_create(email: str, password: str, full_name: str, role: str) -> None:
+        calls.append((email, role))
+
+    monkeypatch.setattr(kc, "create_keycloak_user", fake_create)
+
+    response = client.post("/users", json={**_USER, "role": "admin"}, headers=admin_headers)
+
+    assert response.status_code == 201
+    assert calls == [(_USER["email"], "admin")]
+
+
+def test_admin_delete_syncs_user_to_keycloak(
+    client: TestClient, admin_headers: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Удаление пользователя убирает учётку и из Keycloak."""
+    import app.kc_admin as kc
+
+    deleted: list[str] = []
+    monkeypatch.setattr(kc, "delete_keycloak_user", lambda email: deleted.append(email))
+
+    created = client.post("/users", json=_USER, headers=admin_headers).json()
+    response = client.delete(f"/users/{created['id']}", headers=admin_headers)
+
+    assert response.status_code == 204
+    assert deleted == [_USER["email"]]
+
+
+def test_admin_create_rolls_back_when_keycloak_unavailable(
+    client: TestClient, admin_headers: dict, db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keycloak недоступен → 503, пользователь не создан (нет «полу-учёток»)."""
+    import app.kc_admin as kc
+
+    def boom(*args: Any, **kwargs: Any) -> None:
+        raise kc.KeycloakAdminError("Keycloak недоступен")
+
+    monkeypatch.setattr(kc, "create_keycloak_user", boom)
+
+    response = client.post("/users", json=_USER, headers=admin_headers)
+
+    assert response.status_code == 503
+    assert db_session.scalar(select(User).where(User.email == _USER["email"])) is None
+
+
+def test_admin_delete_keeps_user_when_keycloak_unavailable(
+    client: TestClient, admin_headers: dict, db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keycloak недоступен при удалении → 503, пользователь остаётся локально."""
+    import app.kc_admin as kc
+
+    created = client.post("/users", json=_USER, headers=admin_headers).json()
+
+    def boom(email: str) -> None:
+        raise kc.KeycloakAdminError("Keycloak недоступен")
+
+    monkeypatch.setattr(kc, "delete_keycloak_user", boom)
+
+    response = client.delete(f"/users/{created['id']}", headers=admin_headers)
+
+    assert response.status_code == 503
+    assert db_session.scalar(select(User).where(User.email == _USER["email"])) is not None

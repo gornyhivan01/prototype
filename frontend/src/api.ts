@@ -17,6 +17,24 @@ export interface UserCreate {
   role: Role;
 }
 
+export interface AuditEntry {
+  id: number;
+  action: string;
+  actor_id: number | null;
+  target_user_id: number | null;
+  email: string | null;
+  ip_address: string | null;
+  details: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface AuditPage {
+  total: number;
+  limit: number;
+  offset: number;
+  items: AuditEntry[];
+}
+
 export class ApiError extends Error {
   readonly status: number;
 

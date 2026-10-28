@@ -3,8 +3,8 @@
 [![CI](https://github.com/gornyhivan01/prototype/actions/workflows/ci.yml/badge.svg)](https://github.com/gornyhivan01/prototype/actions/workflows/ci.yml)
 
 Для знакомства с **FastAPI**, **PostgreSQL** и **Alembic**.
-Семь ручек, три миграции, аутентификация по паролю с JWT, **SSO через Keycloak
-(OIDC)**, аудит и юнит-тесты.
+Пользователи и RBAC, аутентификация по паролю с JWT, **SSO через Keycloak
+(OIDC)**, аудит с просмотром журнала и юнит-тесты.
 
 ## Что внутри
 
@@ -16,6 +16,8 @@
 | `GET /users/me` | Текущий пользователь (профиль) | авторизованным |
 | `GET /users/{id}` | Пользователь по id | `admin` или владелец |
 | `DELETE /users/{id}` | Удаление пользователя (себя удалить нельзя) | только `admin` |
+| `GET /audit` | Журнал аудита целиком (фильтры, страницы) | только `admin` |
+| `GET /audit/me` | Свои события в журнале аудита | авторизованным |
 | `POST /auth/login` | Вход по email и паролю, выдача JWT | открыто |
 | `GET /auth/sso/start` | Вход через SSO: редирект в Keycloak | открыто |
 | `GET /auth/sso/callback` | Callback Keycloak → свой JWT → дашборд | открыто |
@@ -23,16 +25,19 @@
 
 Автоматические **Swagger UI** (`/docs`) и **OpenAPI** (`/openapi.json`).
 
-Создание пользователя и попытки входа пишутся в таблицу `audit_log` и в лог
-приложения — см. раздел [«Аудит»](#аудит).
+Создание/удаление пользователей и попытки входа пишутся в таблицу `audit_log`
+и в лог приложения. Журнал смотрится из дашборда: администратору доступен
+полный журнал, пользователю — раздел «Мои действия». API: `GET /audit` и
+`GET /audit/me` — см. раздел [«Аудит»](#аудит).
 
 **Фронтенд — React SPA** (`frontend/`, Vite + TypeScript):
 
 - `/` — лендинг с кнопкой «Войти через SSO»;
-- `/dashboard` — дашборд по роли: обычному пользователю профиль, администратору
-  список пользователей с созданием и удалением. Создание/удаление **синхронно
-  применяется и в Keycloak** (`app/kc_admin.py`), поэтому созданный через
-  дашборд пользователь сразу может войти через SSO.
+- `/dashboard` — дашборд по роли: обычному пользователю профиль и свои события
+  аудита, администратору — список пользователей с созданием/удалением и полный
+  журнал аудита. Создание/удаление **синхронно применяется и в Keycloak**
+  (`app/kc_admin.py`), поэтому созданный через дашборд пользователь сразу может
+  войти через SSO.
 
 FastAPI отдаёт собранный SPA из `frontend/dist` (клиентский роутинг через
 fallback на `index.html`). Если сборки нет (например, CI без Node), работает
@@ -445,9 +450,33 @@ stdout (logger `app.audit`).
 
 | Событие | Когда пишется | `actor_id` |
 |---|---|---|
-| `user.created` | успешная регистрация | сам пользователь |
-| `auth.login.success` | успешный вход | пользователь |
+| `user.created` | успешная регистрация (паролем или админом; при SSO — автосоздание) | админ или `NULL` при SSO |
+| `user.deleted` | удаление пользователя администратором | админ |
+| `auth.login.success` | успешный вход (пароль или SSO) | пользователь |
 | `auth.login.failed` | неверный email или пароль | `NULL` |
+
+**Просмотр журнала.** Полный журнал доступен администратору
+(`GET /audit`), свои события — любому вошедшему (`GET /audit/me`). Обе ручки
+отдают страницу `{total, limit, offset, items}` (новые записи первыми), фильтр
+`action` и пагинацию `limit` (1–200, по умолчанию 50) / `offset`; в полном
+журнале есть ещё фильтр `email` (подстрока).
+
+`/audit/me` включает действия самого пользователя **и** события о его учётке:
+создание аккаунта админом или через SSO, неудачные попытки входа с его email.
+Чужие события туда не попадают.
+
+```bash
+# Полный журнал (только admin), только успешные входы:
+curl 'http://localhost:8000/audit?action=auth.login.success&limit=20' \
+  -H 'Authorization: Bearer <admin-token>'
+
+# Свои события (любая роль):
+curl 'http://localhost:8000/audit/me?limit=20' \
+  -H 'Authorization: Bearer <token>'
+```
+
+В дашборде это разделы **«Журнал аудита»** (админ) и **«Мои действия»**
+(пользователь) с фильтром по действию и кнопкой «Показать ещё».
 
 Для неудачного входа в `details` хранится причина: `{"reason": "unknown_email"}`
 или `{"reason": "invalid_password"}`. Повторная регистрация на занятый email
@@ -472,10 +501,6 @@ LIMIT 20;
 
 IP берётся из `request.client.host`; за reverse-proxy здесь будет адрес прокси,
 поэтому для реального IP нужен разбор `X-Forwarded-For` с доверенным списком.
-
-Событие `user.deleted` зарезервировано в `AuditAction`: ручка удаления пока не
-добавлена, но таблица готова хранить историю и после удаления пользователя
-(`actor_id` и `target_user_id` обнуляются по `ON DELETE SET NULL`).
 
 ## Тесты и покрытие
 
@@ -511,9 +536,11 @@ app/
   audit.py         # события аудита: запись в БД и дублирование в stdout
   dependencies.py  # зависимость get_current_user (Bearer-токен)
   routers/
-    users.py       # POST /users, GET /users/me, GET /users/{id}
-    auth.py        # POST /auth/login
-  main.py          # создание приложения, GET /health
+    users.py       # CRUD пользователей, RBAC, синхронизация с Keycloak
+    auth.py        # вход по паролю и SSO Keycloak
+    audit.py       # GET /audit (admin) и /audit/me (свои события)
+  main.py          # создание приложения, GET /health, отдача React-SPA
+frontend/          # React SPA (Vite + TypeScript)
 alembic/
   env.py           # окружение миграций (URL из настроек)
   versions/        # миграции: users, hashed_password, audit_log
@@ -523,7 +550,8 @@ tests/             # юнит-тесты
 ## Для понимания
 
 1. **FastAPI** собирает приложение в `app/main.py`, а ручки вынесены в
-   `app/routers/users.py` и `app/routers/auth.py` через `APIRouter`.
+   `app/routers/users.py`, `app/routers/auth.py` и `app/routers/audit.py`
+   через `APIRouter`.
 2. **SQLAlchemy** описывает таблицу классом `User` (`app/models.py`).
    Схема БД создаётся **не** автоматически, а миграцией Alembic, изменения схемы версионируются.
 3. **Alembic** читает строку подключения из настроек приложения (`app/config.py`),

@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { api, ApiError, errorMessage, type User } from "../api";
 import { useAuth } from "../auth";
 import { CreateUserForm, UsersTable } from "../components/AdminPanel";
+import { AuditLog } from "../components/AuditLog";
 import { ProfileCard } from "../components/ProfileCard";
 
 export function Dashboard() {
@@ -102,19 +103,24 @@ export function Dashboard() {
           <ProfileCard user={me} />
 
           {me.role === "admin" ? (
-            <section>
-              <h2>Управление пользователями</h2>
-              <CreateUserForm onCreated={() => loadUsers()} />
-              <UsersTable
-                currentUserId={me.id}
-                users={users}
-                onDelete={async (user) => {
-                  await api.delete(`/users/${user.id}`);
-                  await loadUsers();
-                }}
-              />
-            </section>
-          ) : null}
+            <>
+              <section>
+                <h2>Управление пользователями</h2>
+                <CreateUserForm onCreated={() => loadUsers()} />
+                <UsersTable
+                  currentUserId={me.id}
+                  users={users}
+                  onDelete={async (user) => {
+                    await api.delete(`/users/${user.id}`);
+                    await loadUsers();
+                  }}
+                />
+              </section>
+              <AuditLog mode="all" />
+            </>
+          ) : (
+            <AuditLog mode="me" />
+          )}
         </>
       ) : null}
     </main>

@@ -53,6 +53,35 @@ USER_ID_EXAMPLES: dict[str, Any] = {
     "existing": {"summary": "Существующий пользователь", "value": 1},
 }
 
+# --- Журнал аудита (GET /audit, GET /audit/me) ---
+AUDIT_PAGE_EXAMPLE: dict[str, Any] = {
+    "total": 2,
+    "limit": 50,
+    "offset": 0,
+    "items": [
+        {
+            "id": 12,
+            "action": "auth.login.success",
+            "actor_id": 3,
+            "target_user_id": 3,
+            "email": "admin@example.com",
+            "ip_address": "127.0.0.1",
+            "details": {"via": "sso", "role": "admin"},
+            "created_at": "2026-10-28T19:30:27Z",
+        },
+        {
+            "id": 11,
+            "action": "user.created",
+            "actor_id": 3,
+            "target_user_id": 7,
+            "email": "ivan.petrov@example.com",
+            "ip_address": "127.0.0.1",
+            "details": None,
+            "created_at": "2026-10-28T19:29:10Z",
+        },
+    ],
+}
+
 # --- Переиспользуемые ответы с ошибками ---
 NOT_FOUND_RESPONSE: dict[str, Any] = {
     "description": "Пользователь с указанным id не найден",

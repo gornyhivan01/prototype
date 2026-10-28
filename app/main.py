@@ -12,6 +12,9 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException
+from starlette.responses import Response
+from starlette.types import Scope
 
 from app.config import get_settings
 from app.examples import HEALTH_EXAMPLE
@@ -79,23 +82,12 @@ Keycloak** (`GET /auth/sso/start` → callback → свой JWT, редирек�
 app.include_router(auth.router)
 app.include_router(users.router)
 
-# --- Простейший фронтенд (без сборки): лендинг и дашборд по роли ---
-# Токен после SSO достигает дашборда через фрагмент URL (#access_token=…),
-# JS кладёт его в sessionStorage и вызывает API того же порта.
-_STATIC_DIR = Path(__file__).resolve().parent / "static"
-app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
-
-
-@app.get("/", include_in_schema=False)
-def index() -> FileResponse:
-    """Лендинг с кнопкой «Войти через SSO»."""
-    return FileResponse(_STATIC_DIR / "index.html")
-
-
-@app.get("/dashboard", include_in_schema=False)
-def dashboard() -> FileResponse:
-    """Дашборд: профиль (все) или управление пользователями (admin)."""
-    return FileResponse(_STATIC_DIR / "dashboard.html")
+# --- Фронтенд ---
+# Прод: FastAPI отдаёт собранный React-SPA из frontend/dist, неизвестные пути
+# (клиентский роутинг, например /dashboard) отдают index.html.
+# Если сборки нет (dev/CI без Node), работает прежняя статика без сборки.
+# Монтирование делается в конце файла, после всех API-маршрутов.
+_FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 
 @app.get(
@@ -120,3 +112,34 @@ curl http://localhost:8000/health
 def health() -> dict[str, str]:
     """Возвращает ``ok``, если сервис запущен."""
     return {"status": "ok"}
+
+
+class _SPAStaticFiles(StaticFiles):
+    """Статика SPA: неизвестный путь отдаёт ``index.html`` (клиентский роутер)."""
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        try:
+            return await super().get_response(path, scope)
+        except HTTPException as exc:
+            if exc.status_code != 404:
+                raise
+            return await super().get_response("index.html", scope)
+
+
+if (_FRONTEND_DIST / "index.html").is_file():
+    # Прод/dev с собранным React (npm run build).
+    app.mount("/", _SPAStaticFiles(directory=_FRONTEND_DIST, html=True), name="spa")
+else:
+    # Фолбэк без сборки: прежние статические страницы.
+    _STATIC_DIR = Path(__file__).resolve().parent / "static"
+    app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+
+    @app.get("/", include_in_schema=False)
+    def index() -> FileResponse:
+        """Лендинг с кнопкой «Войти через SSO»."""
+        return FileResponse(_STATIC_DIR / "index.html")
+
+    @app.get("/dashboard", include_in_schema=False)
+    def dashboard() -> FileResponse:
+        """Дашборд: профиль (все) или управление пользователями (admin)."""
+        return FileResponse(_STATIC_DIR / "dashboard.html")

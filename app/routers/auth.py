@@ -105,7 +105,8 @@ def _dashboard_redirect_page(token: str) -> str:
     поэтому это безопаснее, чем строка запроса. Дашборд читает его в JS.
     """
     escaped = html.escape(token)
-    dashboard_url = f"/dashboard#access_token={quote(token, safe='')}"
+    frontend = get_settings().sso_frontend_url.rstrip("/")
+    dashboard_url = f"{frontend}/dashboard#access_token={quote(token, safe='')}"
     return f"""<!DOCTYPE html>
 <html lang="ru"><head><meta charset="utf-8"><title>Вход выполнен</title>
 <meta http-equiv="refresh" content="0; url={html.escape(dashboard_url, quote=True)}">

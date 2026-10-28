@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     # Куда Keycloak вернёт после single logout. Должен быть в списке
     # postLogoutRedirectUris клиента (keycloak/realm-export.json).
     sso_post_logout_redirect_uri: str = "http://localhost:8000/"
+    # Origin, где живёт SPA-фронтенд. Пусто — тот же origin, что у API
+    # (прод: FastAPI отдаёт собранный React). В dev-режиме Vite:
+    # SSO_FRONTEND_URL=http://localhost:5173, чтобы мост после callback
+    # перенаправлял токен в dev-сервер.
+    sso_frontend_url: str = ""
     # Учётка админа Keycloak для Admin REST (создание/удаление пользователей
     # синхронно с SSO). Только для разработки; задаётся через .env.
     keycloak_admin_user: str = "admin"

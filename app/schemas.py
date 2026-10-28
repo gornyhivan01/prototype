@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -66,3 +66,31 @@ class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"  # noqa: S105 — имя поля по стандарту OAuth2
     expires_in: int = Field(description="Срок жизни токена в секундах", examples=[1800])
+
+
+class AuditEntryRead(BaseModel):
+    """Событие аудита, возвращаемое API.
+
+    ``email`` — строка, а не ``EmailStr``: при неудачном парольном входе сюда
+    может попасть произвольный ввод пользователя.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    action: str
+    actor_id: int | None
+    target_user_id: int | None
+    email: str | None
+    ip_address: str | None
+    details: dict[str, Any] | None
+    created_at: datetime
+
+
+class AuditPage(BaseModel):
+    """Страница журнала аудита: новые записи первыми."""
+
+    total: int = Field(description="Всего записей по фильтру", examples=[42])
+    limit: int = Field(description="Размер страницы", examples=[50])
+    offset: int = Field(description="Сколько записей пропущено", examples=[0])
+    items: list[AuditEntryRead]

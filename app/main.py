@@ -18,7 +18,7 @@ from starlette.types import Scope
 
 from app.config import get_settings
 from app.examples import HEALTH_EXAMPLE
-from app.routers import auth, users
+from app.routers import audit, auth, users
 
 # Аудит пишется в stdout через logger "app.audit". basicConfig не перетирает
 # настройки uvicorn, если обработчики уже добавлены.
@@ -45,8 +45,10 @@ Keycloak** (`GET /auth/sso/start` → callback → свой JWT, редирек�
 пользователь видит свой профиль. Роль при SSO приходит из Keycloak
 (realm-роль `admin`), локально хранится в `users.role`.
 
-**Аудит:** создание пользователя и попытки входа пишутся в таблицу
+**Аудит:** создание/удаление пользователя и попытки входа пишутся в таблицу
 `audit_log` и дублируются в stdout. Пароли и токены в аудит не попадают.
+Журнал можно смотреть через API: администратор — весь (`GET /audit`),
+пользователь — свои события (`GET /audit/me`).
 
 **Как попробовать:**
 
@@ -69,6 +71,8 @@ Keycloak** (`GET /auth/sso/start` → callback → свой JWT, редирек�
 | GET | `/users/me` | Текущий пользователь (нужен JWT) |
 | GET | `/users/{user_id}` | Пользователь по id (админ или владелец) |
 | DELETE | `/users/{user_id}` | Удаление пользователя (**только admin**; себя удалить нельзя) |
+| GET | `/audit` | Журнал аудита целиком (**только admin**) |
+| GET | `/audit/me` | Свои события в журнале аудита |
 
 Страницы: `/` — вход через SSO, `/dashboard` — дашборд по роли.
 """,
@@ -76,11 +80,16 @@ Keycloak** (`GET /auth/sso/start` → callback → свой JWT, редирек�
         {"name": "service", "description": "Служебные ручки: проверка живости сервиса."},
         {"name": "users", "description": "Создание и просмотр пользователей в PostgreSQL."},
         {"name": "auth", "description": "Аутентификация: по паролю и через SSO (Keycloak)."},
+        {
+            "name": "audit",
+            "description": "Журнал аудита: целиком — администратору, свои события — пользователю.",
+        },
     ],
 )
 
 app.include_router(auth.router)
 app.include_router(users.router)
+app.include_router(audit.router)
 
 # --- Фронтенд ---
 # Прод: FastAPI отдаёт собранный React-SPA из frontend/dist, неизвестные пути

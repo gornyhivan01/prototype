@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -229,3 +229,68 @@ def read_user(
             detail="Недостаточно прав",
         )
     return user
+
+
+@router.delete(
+    "/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+    summary="Удалить пользователя (только для администратора)",
+    description="""Удаляет пользователя из PostgreSQL.
+
+Ручка защищена RBAC: доступна только пользователю с ролью `admin`.
+Удалить собственную учётку нельзя — это защита от блокировки самого себя.
+Записи аудита этого пользователя сохраняются (FK `ON DELETE SET NULL`),
+удаляется только сам пользователь.
+
+**Пример запроса:**
+
+```bash
+curl -X DELETE http://localhost:8000/users/2 \\
+  -H 'Authorization: Bearer <admin-token>'
+```
+""",
+    responses={
+        204: {"description": "Пользователь удалён"},
+        400: {"description": "Нельзя удалить собственную учётку"},
+        401: UNAUTHORIZED_RESPONSE,
+        403: {"description": "Роль не позволяет удалять пользователей"},
+        404: NOT_FOUND_RESPONSE,
+        422: VALIDATION_RESPONSE,
+    },
+)
+def delete_user(
+    user_id: Annotated[
+        int,
+        Path(description="Идентификатор пользователя", openapi_examples=USER_ID_EXAMPLES),
+    ],
+    db: DbSession,
+    request: Request,
+    admin: AdminUser,
+) -> None:
+    """Удаляет пользователя; аудит действия сохраняется."""
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Пользователь не найден",
+        )
+    if user.id == admin.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Нельзя удалить собственную учётку",
+        )
+
+    entry = add_entry(
+        db,
+        action=AuditAction.USER_DELETED,
+        actor_id=admin.id,
+        target_user_id=user.id,
+        email=user.email,
+        request=request,
+        details={"deleted": user.email},
+    )
+    db.delete(user)
+    db.commit()
+    log_entry(entry)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

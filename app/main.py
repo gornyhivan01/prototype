@@ -64,6 +64,7 @@ Keycloak** (`GET /auth/sso/start` → callback → свой JWT, редирек�
 | GET | `/auth/sso/callback` | Callback Keycloak: обмен кода на свой JWT |
 | GET | `/users/me` | Текущий пользователь (нужен JWT) |
 | GET | `/users/{user_id}` | Пользователь по id (админ или владелец) |
+| DELETE | `/users/{user_id}` | Удаление пользователя (**только admin**; себя удалить нельзя) |
 
 Страницы: `/` — вход через SSO, `/dashboard` — дашборд по роли.
 """,

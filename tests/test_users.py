@@ -6,7 +6,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import User
+from app.audit import AuditAction
+from app.models import AuditLog, User
 
 _USER = {
     "email": "ivan.petrov@example.com",
@@ -206,3 +207,67 @@ def test_unknown_field_returns_422(client: TestClient, admin_headers: dict) -> N
     response = client.post("/users", json={**_USER, "is_admin": True}, headers=admin_headers)
 
     assert response.status_code == 422
+
+
+# --- Удаление пользователей (только admin) ---
+
+
+def test_admin_deletes_user(client: TestClient, admin_headers: dict, db_session: Session) -> None:
+    """Админ удаляет пользователя: 204, запись пропадает из БД, аудит остаётся."""
+    created = client.post("/users", json=_USER, headers=admin_headers).json()
+    admin_id = client.get("/users/me", headers=admin_headers).json()["id"]
+
+    response = client.delete(f"/users/{created['id']}", headers=admin_headers)
+
+    assert response.status_code == 204
+    assert db_session.scalar(select(User).where(User.email == _USER["email"])) is None
+    entry = db_session.scalar(select(AuditLog).where(AuditLog.action == AuditAction.USER_DELETED))
+    assert entry is not None
+    assert entry.actor_id == admin_id
+    assert entry.email == _USER["email"]
+
+
+def test_deleted_user_cannot_login(client: TestClient, admin_headers: dict) -> None:
+    """После удаления вход по паролю невозможен."""
+    created = client.post("/users", json=_USER, headers=admin_headers).json()
+    assert client.delete(f"/users/{created['id']}", headers=admin_headers).status_code == 204
+
+    response = client.post(
+        "/auth/login",
+        data={"username": _USER["email"], "password": _USER["password"]},
+    )
+    assert response.status_code == 401
+
+
+def test_anon_cannot_delete_user(client: TestClient) -> None:
+    """Аноним не может удалять пользователей — 401."""
+    assert client.delete("/users/1").status_code == 401
+
+
+def test_regular_user_cannot_delete_user(
+    client: TestClient, admin_headers: dict, user_headers: dict
+) -> None:
+    """Обычный пользователь не может удалять — 403."""
+    created = client.post("/users", json=_USER, headers=admin_headers).json()
+
+    response = client.delete(f"/users/{created['id']}", headers=user_headers)
+
+    assert response.status_code == 403
+
+
+def test_admin_cannot_delete_own_account(client: TestClient, admin_headers: dict) -> None:
+    """Админ не может удалить сам себя — 400."""
+    admin_id = client.get("/users/me", headers=admin_headers).json()["id"]
+
+    response = client.delete(f"/users/{admin_id}", headers=admin_headers)
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Нельзя удалить собственную учётку"
+
+
+def test_delete_unknown_user_returns_404(client: TestClient, admin_headers: dict) -> None:
+    """Удаление несуществующего пользователя — 404."""
+    response = client.delete("/users/999", headers=admin_headers)
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Пользователь не найден"

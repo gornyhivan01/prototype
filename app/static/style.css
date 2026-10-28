@@ -58,6 +58,7 @@ h3 { margin: 20px 0 8px; }
   color: var(--muted);
   border: 1px solid var(--border);
 }
+.btn.small { padding: 4px 10px; font-size: .85em; }
 
 .form label { display: block; margin: 8px 0 2px; font-size: .9em; }
 .form input[type="email"],

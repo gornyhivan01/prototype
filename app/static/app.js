@@ -95,9 +95,25 @@ async function refreshUsers() {
     .map(
       (u) =>
         `<tr><td>${u.id}</td><td>${escapeHtml(u.email)}</td>` +
-        `<td>${escapeHtml(u.full_name)}</td><td>${roleLabel(u.role)}</td></tr>`
+        `<td>${escapeHtml(u.full_name)}</td><td>${roleLabel(u.role)}</td>` +
+        `<td><button class="btn ghost small del-btn" data-id="${u.id}" ` +
+        `data-email="${escapeHtml(u.email)}">Удалить</button></td></tr>`
     )
     .join("");
+
+  for (const button of document.querySelectorAll(".del-btn")) {
+    button.onclick = async () => {
+      if (!confirm(`Удалить пользователя ${button.dataset.email}?`)) {
+        return;
+      }
+      try {
+        await api(`/users/${button.dataset.id}`, { method: "DELETE" });
+        await refreshUsers();
+      } catch (error) {
+        status("Ошибка при удалении: " + error.message, "error");
+      }
+    };
+  }
 }
 
 function bindCreateForm() {

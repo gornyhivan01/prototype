@@ -26,13 +26,17 @@
 Создание пользователя и попытки входа пишутся в таблицу `audit_log` и в лог
 приложения — см. раздел [«Аудит»](#аудит).
 
-Также есть **простейший фронтенд** без сборки (статика из `app/static/`):
+**Фронтенд — React SPA** (`frontend/`, Vite + TypeScript):
 
 - `/` — лендинг с кнопкой «Войти через SSO»;
 - `/dashboard` — дашборд по роли: обычному пользователю профиль, администратору
   список пользователей с созданием и удалением. Создание/удаление **синхронно
   применяется и в Keycloak** (`app/kc_admin.py`), поэтому созданный через
   дашборд пользователь сразу может войти через SSO.
+
+FastAPI отдаёт собранный SPA из `frontend/dist` (клиентский роутинг через
+fallback на `index.html`). Если сборки нет (например, CI без Node), работает
+прежняя статика без сборки из `app/static/`.
 
 ## Стек
 
@@ -50,8 +54,9 @@
   отражает её для проверок доступа
 - HTTP-клиент для SSO: `httpx`; PKCE и валидация токенов — собственный код в
   `app/sso.py`
-- Фронтенд: статика без сборки (HTML/CSS/JS в `app/static/`), токен из
-  callback доставляется дашборду во фрагменте URL
+- Фронтенд: **React 19 + TypeScript + Vite** (`frontend/`), React Router;
+  токен из callback доставляется SPA во фрагменте URL и хранится в
+  `sessionStorage`; сборка отдаётся FastAPI
 - Тесты: pytest + pytest-cov, SQLite в памяти; OpenID-проверки — с фейковым JWKS
 
 ## Быстрый старт
@@ -69,13 +74,30 @@ docker compose up -d postgres keycloak
 # 4. Миграции
 uv run alembic upgrade head
 
-# 5. Запуск сервиса
+# 5. Фронтенд (React SPA, нужен Node 22)
+cd frontend && npm ci && npm run build && cd ..
+
+# 6. Запуск сервиса
 uv run uvicorn app.main:app --reload
 ```
 
 Открыть:
+- приложение — http://localhost:8000/
 - документация — http://localhost:8000/docs
 - схема OpenAPI — http://localhost:8000/openapi.json
+
+**Разработка фронтенда (hot reload):**
+
+```bash
+# терминал 1: backend с редиректом SPA на dev-сервер
+SSO_FRONTEND_URL=http://localhost:5173 uv run uvicorn app.main:app --reload
+
+# терминал 2: Vite (проксирует /auth, /users, /health на :8000)
+cd frontend && npm run dev
+```
+
+SPA откроется на http://localhost:5173/, а SSO-callback по-прежнему придёт на
+`:8000` и перенаправит токен на dev-сервер.
 
 В Swagger UI у каждой ручки приведены примеры на русском: описание с командой
 `curl`, готовые примеры тела запроса, а также примеры успешных ответов и ошибок
@@ -191,7 +213,10 @@ Keycloak → после входа откроется дашборд `/dashboard
   (идемпотентно).
 - `app/routers/auth.py::sso_start/sso_callback` — эндпоинты потока; роль из
   `realm_access.roles` (для этого клиенту добавлен protocol-мэппер).
-- `app/static/` — лендинг и дашборд (HTML/CSS/JS без сборки).
+- `app/static/` — фолбэк-лендинг и дашборд без сборки (если `frontend/dist`
+  ещё не собран).
+- `frontend/` — React SPA: `src/pages`, `src/components`, `src/api.ts`,
+  `src/auth.tsx`; сборка → `frontend/dist` (её отдаёт FastAPI).
 
 **Параметры (`.env`, все опциональны):**
 
@@ -203,6 +228,8 @@ Keycloak → после входа откроется дашборд `/dashboard
 | `KEYCLOAK_REALM` | `prototype` | Реалм |
 | `KEYCLOAK_CLIENT_ID` / `KEYCLOAK_CLIENT_SECRET` | `prototype-web` / `prototype-web-secret` | Клиент (confidential) |
 | `SSO_REDIRECT_URI` | `http://localhost:8000/auth/sso/callback` | Куда Keycloak вернёт браузер |
+| `SSO_FRONTEND_URL` | пусто (тот же origin) | Origin SPA: для Vite-dev — `http://localhost:5173` |
+| `KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASSWORD` | `admin` / `admin` | Admin REST для синхронизации пользователей |
 
 **Админ-консоль Keycloak:** http://localhost:8080, `admin` / `admin`
 (создание пользователей, групп и ролей, брокеринг внешних IdP).

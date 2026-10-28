@@ -23,9 +23,9 @@ _USER: dict[str, Any] = {
 
 
 @pytest.fixture
-def user(client: TestClient) -> dict[str, Any]:
-    """Создаёт пользователя и возвращает тело ответа."""
-    response = client.post("/users", json=_USER)
+def user(client: TestClient, admin_headers: dict[str, str]) -> dict[str, Any]:
+    """Создаёт пользователя от имени администратора и возвращает тело ответа."""
+    response = client.post("/users", json=_USER, headers=admin_headers)
     assert response.status_code == 201
     return response.json()
 

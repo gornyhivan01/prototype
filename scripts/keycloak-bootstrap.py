@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Создаёт тестового пользователя SSO в реалме ``prototype`` Keycloak.
+"""Создаёт роли и пользователей SSO в реалме ``prototype`` Keycloak.
 
 Запуск (после ``docker compose up -d keycloak``):
 
     python scripts/keycloak-bootstrap.py
 
-Скрипт идемпотентен: повторный запуск не создаёт дублей, а сбрасывает пароль.
+Скрипт идемпотентен: повторный запуск не создаёт дублей, а сбрасывает пароли.
 
 Использует только стандартную библиотеку (urllib) — без внешних зависимостей.
-После выполнения войти в SSO можно под:
-    sso.user@example.com / password123
+После выполнения:
+
+    Администратор: admin@example.com  / password123   (роль admin)
+    Обычный        sso.user@example.com / password123  (роль user)
 """
 
 from __future__ import annotations
@@ -20,17 +22,20 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from typing import Any
 
 KEYCLOAK_URL = "http://localhost:8080"
 REALM = "prototype"
 
-# Данные dev-пользователя Keycloak. Пароль только для локального стенда.  # noqa: S105
 ADMIN_USER = "admin"
 ADMIN_PASSWORD = "admin"  # noqa: S105 — dev-админ Keycloak (docker-compose)
-SSO_EMAIL = "sso.user@example.com"
-SSO_PASSWORD = "password123"  # noqa: S105 — dev-пользователь реалма prototype
-SSO_FIRST_NAME = "SSO"
-SSO_LAST_NAME = "User"
+
+ADMIN_ROLE = "admin"
+
+ACCOUNTS = [
+    {"email": "admin@example.com", "password": "password123", "role": ADMIN_ROLE},
+    {"email": "sso.user@example.com", "password": "password123", "role": "user"},
+]
 
 
 class Unreachable(Exception):
@@ -41,10 +46,10 @@ def _request(
     method: str,
     url: str,
     *,
-    data: dict | None = None,
+    data: dict | list | None = None,
     token: str | None = None,
     as_json: bool = False,
-) -> dict:
+) -> Any:
     headers = {"Accept": "application/json"}
     body: bytes | None = None
     if data is not None:
@@ -66,6 +71,8 @@ def _request(
                 return {}
             return json.loads(payload)
     except OSError as exc:
+        if isinstance(exc, urllib.error.HTTPError):
+            raise  # HTTP-ошибку обрабатывает вызывающий код
         raise Unreachable(f"Сеть не ответила ({url}): {exc}") from exc
 
 
@@ -93,9 +100,29 @@ def admin_token() -> str:
     }
     try:
         response = _request("POST", endpoint, data=payload)
-    except (urllib.error.URLError, urllib.error.HTTPError) as exc:
-        sys.exit(f"Не удалось получить токен админа: {exc}")
+    except urllib.error.HTTPError as exc:
+        sys.exit(f"Не удалось получить токен админа: HTTP {exc.code}")
+    except Unreachable as exc:
+        sys.exit(str(exc))
     return response["access_token"]
+
+
+def ensure_realm_role(token: str, role_name: str) -> dict:
+    """Создаёт realm-роль, если её нет, и возвращает её."""
+    url = f"{KEYCLOAK_URL}/admin/realms/{REALM}/roles/{role_name}"
+    try:
+        return _request("GET", url, token=token)
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404:
+            raise
+    _request(
+        "POST",
+        f"{KEYCLOAK_URL}/admin/realms/{REALM}/roles",
+        data={"name": role_name, "description": "Администратор сервиса"},
+        token=token,
+        as_json=True,
+    )
+    return _request("GET", url, token=token)
 
 
 def find_user(token: str, email: str) -> dict | None:
@@ -106,26 +133,60 @@ def find_user(token: str, email: str) -> dict | None:
     return users[0] if users else None
 
 
-def create_user(token: str, email: str) -> dict:
-    """Создаёт пользователя и возвращает его."""
-    url = f"{KEYCLOAK_URL}/admin/realms/{REALM}/users"
-    payload = {
-        "username": email,
-        "email": email,
-        "enabled": True,
-        "emailVerified": True,
-        "firstName": SSO_FIRST_NAME,
-        "lastName": SSO_LAST_NAME,
-    }
-    _request("POST", url, data=payload, token=token, as_json=True)
-    return find_user(token, email)
+def ensure_user(token: str, email: str) -> dict:
+    """Создаёт пользователя (если нет), заполняет профиль и возвращает его."""
+    user = find_user(token, email)
+    if user is None:
+        _request(
+            "POST",
+            f"{KEYCLOAK_URL}/admin/realms/{REALM}/users",
+            data={
+                "username": email,
+                "email": email,
+                "enabled": True,
+                "emailVerified": True,
+                "firstName": email.split("@")[0],
+                "lastName": "SSO",
+            },
+            token=token,
+            as_json=True,
+        )
+        user = find_user(token, email)
+        if user is None:
+            sys.exit("Не удалось создать пользователя")
+    # У созданных через admin-REST пользователей Keycloak может ставить
+    # required action VERIFY_PROFILE — чистим, чтобы войти без лишнего шага.
+    _request(
+        "PUT",
+        f"{KEYCLOAK_URL}/admin/realms/{REALM}/users/{user['id']}",
+        data={
+            "firstName": email.split("@")[0],
+            "lastName": "SSO",
+            "requiredActions": [],
+        },
+        token=token,
+        as_json=True,
+    )
+    return find_user(token, email) or user
 
 
-def set_password(token: str, user_id: str, password: str) -> None:
+def set_password(token: str, user: dict, password: str) -> None:
     """Устанавливает пароль пользователю (без требования менять)."""
-    url = f"{KEYCLOAK_URL}/admin/realms/{REALM}/users/{user_id}/reset-password"
+    url = f"{KEYCLOAK_URL}/admin/realms/{REALM}/users/{user['id']}/reset-password"
     payload = {"type": "password", "value": password, "temporary": False}
     _request("PUT", url, data=payload, token=token, as_json=True)
+
+
+def grant_realm_role(token: str, user: dict, role: dict) -> None:
+    """Назначает realm-роль пользователю."""
+    url = f"{KEYCLOAK_URL}/admin/realms/{REALM}/users/{user['id']}/role-mappings/realm"
+    _request(
+        "POST",
+        url,
+        data=[{"id": role["id"], "name": role["name"]}],
+        token=token,
+        as_json=True,
+    )
 
 
 def main() -> None:
@@ -134,21 +195,20 @@ def main() -> None:
     print("Keycloak готов, получаю токен админа…")
     token = admin_token()
 
-    print(f"Нахожу/создаю пользователя {SSO_EMAIL}…")
-    user = find_user(token, SSO_EMAIL)
-    if user is None:
-        user = create_user(token, SSO_EMAIL)
-        print("Пользователь создан.")
-    else:
-        print("Пользователь уже существует.")
+    print(f"Проверяю realm-роль «{ADMIN_ROLE}»…")
+    role = ensure_realm_role(token, ADMIN_ROLE)
 
-    print("Устанавливаю пароль…")
-    set_password(token, user["id"], SSO_PASSWORD)
+    for account in ACCOUNTS:
+        user = ensure_user(token, account["email"])
+        set_password(token, user, account["password"])
+        if account["role"] == ADMIN_ROLE:
+            grant_realm_role(token, user, role)
+        print(f"Готово: {account['email']} (роль {account['role']})")
 
     print()
-    print("Готово. Вход через SSO:")
-    print(f"    email:    {SSO_EMAIL}")
-    print(f"    password: {SSO_PASSWORD}")
+    print("Учётные записи для SSO-входа:")
+    for account in ACCOUNTS:
+        print(f"    {account['email']:28} / {account['password']}")
     print()
     print("Откройте http://localhost:8000/auth/sso/start в браузере.")
 

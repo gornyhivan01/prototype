@@ -10,6 +10,11 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
 
+# Роли пользователей. Источник истины для ролей при SSO — Keycloak
+# (realm-роль ``admin``), локальная колонка — их отражение для RBAC.
+ROLE_ADMIN = "admin"
+ROLE_USER = "user"
+
 
 class User(Base):
     """Пользователь сервиса (для демонстрации чтения/записи в PostgreSQL)."""
@@ -20,6 +25,9 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True, nullable=False)
     full_name: Mapped[str] = mapped_column(String(200), nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=ROLE_USER, default=ROLE_USER
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

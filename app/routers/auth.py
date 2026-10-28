@@ -10,6 +10,7 @@ from __future__ import annotations
 import html
 import secrets
 from typing import Annotated, Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -26,7 +27,7 @@ from app.examples import (
     TOKEN_EXAMPLE,
     VALIDATION_RESPONSE,
 )
-from app.models import AuditLog, User
+from app.models import ROLE_ADMIN, ROLE_USER, AuditLog, User
 from app.schemas import Token
 from app.security import create_access_token, hash_password, needs_rehash, verify_password
 from app.sso import SsoError
@@ -72,30 +73,51 @@ def _error_page(message: str) -> str:
 </body></html>"""
 
 
-def _success_page(token: str, expires_in: int) -> str:
-    """Страница-результат: показывает JWT и открывает Swagger с ним."""
+def _role_from_claims(claims: dict[str, Any]) -> str:
+    """Выводит роль из claims Keycloak (realm-роль ``admin``, иначе ``user``).
+
+    Роли приходят в ``realm_access.roles`` стандартного клиентского скоупа
+    ``roles``: ``["default-roles-prototype", "offline_access", ..., "admin"]``.
+    """
+    realm_access = claims.get("realm_access") or {}
+    realm_roles = realm_access.get("roles") or claims.get("roles") or []
+    if ROLE_ADMIN in realm_roles:
+        return ROLE_ADMIN
+    return ROLE_USER
+
+
+def _role_from_claims_if_admin(claims: dict[str, Any]) -> str | None:
+    """Для существующего пользователя: повышение до админа, но не понижение.
+
+    Источник истины ролей при SSO — Keycloak: если Keycloak наделил ролью
+    ``admin``, локальная роль обновляется. Отсутствие роли администратора не
+    отнимает её у пользователя, созданного раньше (например, другим способом).
+    """
+    role = _role_from_claims(claims)
+    return ROLE_ADMIN if role == ROLE_ADMIN else None
+
+
+def _dashboard_redirect_page(token: str) -> str:
+    """Страница-мост: показывает токен и сразу перенаправляет на дашборд.
+
+    Токен передаётся дашборду во фрагменте URL (``#access_token=…``):
+    фрагмент не отправляется на сервер и не попадает в логи Access Log,
+    поэтому это безопаснее, чем строка запроса. Дашборд читает его в JS.
+    """
     escaped = html.escape(token)
+    dashboard_url = f"/dashboard#access_token={quote(token, safe='')}"
     return f"""<!DOCTYPE html>
-<html lang="ru"><head><meta charset="utf-8"><title>Вход выполнен</title></head>
+<html lang="ru"><head><meta charset="utf-8"><title>Вход выполнен</title>
+<meta http-equiv="refresh" content="0; url={html.escape(dashboard_url, quote=True)}">
+<script>window.location.replace("{html.escape(dashboard_url, quote=True)}");</script>
+</head>
 <body>
 <h1>✅ Вход через SSO выполнен</h1>
-<p>Вы аутентифицированы через Keycloak. Ниже — access-токен сервиса
-(действует <strong>{expires_in}</strong> сек.).</p>
+<p>Перенаправляем на дашборд… Если ничего не произошло:
+<a href="/dashboard">откройте дашборд вручную</a>.</p>
+<details><summary>Показать access-токен</summary>
 <textarea id="token" readonly rows="4" style="width:95%;word-break:break-all">{escaped}</textarea>
-<br>
-<button id="copy-btn">Копировать</button>
-<script>
-function copyToken() {{
-  var text = document.getElementById('token').value;
-  navigator.clipboard.writeText(text);
-  document.getElementById('copy-btn').textContent = 'Скопировано';
-}}
-document.getElementById('copy-btn').onclick = copyToken;
-</script>
-<p>Используйте токен в Swagger: <a href="/docs">/docs</a> → <b>Authorize</b> →
-вставьте токен без слова <code>Bearer</code>.</p>
-<p>Либо в curl: <code>Authorization: Bearer {escaped[:40]}…</code></p>
-<p><a href="/auth/sso/start">Войти под другой учёткой</a></p>
+</details>
 </body></html>"""
 
 
@@ -275,6 +297,7 @@ def sso_callback(
             email=email,
             full_name=_name_from_claims(claims),
             hashed_password=hash_password(secrets.token_urlsafe(32)),
+            role=_role_from_claims(claims),
         )
         db.add(user)
         db.flush()
@@ -285,9 +308,13 @@ def sso_callback(
                 target_user_id=user.id,
                 email=email,
                 request=request,
-                details={"via": "sso"},
+                details={"via": "sso", "role": user.role},
             )
         )
+    else:
+        new_role = _role_from_claims_if_admin(claims)
+        if new_role is not None and user.role != new_role:
+            user.role = new_role
 
     entries.append(
         add_entry(
@@ -297,7 +324,7 @@ def sso_callback(
             target_user_id=user.id,
             email=user.email,
             request=request,
-            details={"via": "sso"},
+            details={"via": "sso", "role": user.role},
         )
     )
     db.commit()
@@ -305,4 +332,4 @@ def sso_callback(
         log_entry(entry)
 
     token = create_access_token(subject=str(user.id))
-    return HTMLResponse(_success_page(token, get_settings().access_token_expire_minutes * 60))
+    return HTMLResponse(_dashboard_redirect_page(token))

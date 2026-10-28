@@ -1,4 +1,4 @@
-"""Зависимости FastAPI: текущий пользователь по JWT."""
+"""Зависимости FastAPI: текущий пользователь по JWT и RBAC."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import User
+from app.models import ROLE_ADMIN, User
 from app.security import decode_access_token
 
 # ``tokenUrl`` используется Swagger UI: кнопка Authorize отправляет форму
@@ -42,3 +42,27 @@ def get_current_user(token: BearerToken, db: DbSession) -> User:
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+def require_roles(*roles: str):
+    """Фабрика зависимостей: текущий пользователь должен иметь одну из ролей.
+
+    Использование:
+
+        def read_all(current_user: Annotated[User, Depends(require_roles(ROLE_ADMIN))]) -> ...
+
+    Возвращает 403 при недостаточных правах (после успешной аутентификации).
+    """
+
+    def _require_role(current_user: CurrentUser) -> User:
+        if current_user.role not in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Недостаточно прав",
+            )
+        return current_user
+
+    return _require_role
+
+
+AdminUser = Annotated[User, Depends(require_roles(ROLE_ADMIN))]

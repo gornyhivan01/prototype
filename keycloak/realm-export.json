@@ -33,8 +33,31 @@
       "secret": "prototype-web-secret",
       "defaultClientScopes": ["web-origins", "acr", "profile", "roles", "email"],
       "optionalClientScopes": ["address", "phone", "offline_access", "microprofile-jwt"],
-      "protocolMappers": []
+      "protocolMappers": [
+        {
+          "name": "realm-roles-to-id-token",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "id.token.claim": "true",
+            "access.token.claim": "false",
+            "userinfo.token.claim": "false",
+            "claim.name": "realm_access.roles",
+            "jsonType.label": "String",
+            "multivalued": "true"
+          }
+        }
+      ]
     }
   ],
+  "roles": {
+    "realm": [
+      {
+        "name": "admin",
+        "description": "Администратор сервиса (управление пользователями)"
+      }
+    ]
+  },
   "users": []
 }

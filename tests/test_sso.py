@@ -208,6 +208,7 @@ def test_callback_creates_user_and_issues_token(
     user = db_session.scalar(select(User).where(User.email == "sso.user@example.com"))
     assert user is not None
     assert user.full_name == "SSO User"
+    assert user.role == "user"  # без claim admin пользователь обычный
     # Пароль SSO-пользователя не может быть проверен по подсказке формата Argon2.
     assert user.hashed_password.startswith("$argon2id$")
 
@@ -234,6 +235,59 @@ def test_callback_uses_existing_user_without_double_registration(
     users = db_session.scalars(select(User).where(User.email == "sso.user@example.com")).all()
     assert len(users) == 1
     assert users[0].full_name == "Уже есть"
+
+
+def test_callback_assigns_admin_role_from_keycloak_claim(
+    monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """Пользователь с realm-ролью admin в id_token создаётся администратором."""
+    claims = {
+        "sub": "a0f7-9d1c",
+        "email": "admin@example.com",
+        "name": "Admin SSO",
+        "realm_access": {"roles": ["default-roles-prototype", "offline_access", "admin"]},
+    }
+    monkeypatch.setattr(sso, "exchange_id_token_claims", lambda **_: claims)
+
+    client.get("/auth/sso/callback?code=abc&state=xyz")
+
+    user = db_session.scalar(select(User).where(User.email == "admin@example.com"))
+    assert user is not None
+    assert user.role == "admin"
+
+
+def test_callback_promotes_existing_user_to_admin(
+    monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """Если пользователь уже есть, роль admin из Keycloak повышает его."""
+    from app.security import hash_password
+
+    existing = User(
+        email="sso.user@example.com",
+        full_name="Уже есть",
+        hashed_password=hash_password("password123"),
+        role="user",
+    )
+    db_session.add(existing)
+    db_session.commit()
+
+    claims = {
+        "sub": "a0f7-9d1c",
+        "email": "sso.user@example.com",
+        "name": "SSO User",
+        "realm_access": {"roles": ["admin"]},
+    }
+    monkeypatch.setattr(sso, "exchange_id_token_claims", lambda **_: claims)
+    client.get("/auth/sso/callback?code=abc&state=xyz")
+
+    user = db_session.scalar(select(User).where(User.email == "sso.user@example.com"))
+    assert user is not None
+    assert user.role == "admin"
+    assert user.full_name == "Уже есть"  # профиль не перезаписан
 
 
 def test_callback_rejects_invalid_state(

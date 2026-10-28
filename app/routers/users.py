@@ -1,5 +1,10 @@
 """Эндпоинты работы с пользователями.
 
+Создание и просмотр списка пользователей — только для администратора (RBAC,
+роль приходит из Keycloak при SSO-входе). Свои собственные данные пользователь
+видит через `GET /users/me`, а чужой профиль через `GET /users/{id}`
+(админ или сам владелец).
+
 Описания, примеры запросов и примеры ответов на русском языке отображаются в
 Swagger UI на ``/docs``.
 """
@@ -9,12 +14,13 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request, status
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.audit import AuditAction, add_entry, log_entry, log_rejection
 from app.database import get_db
-from app.dependencies import CurrentUser
+from app.dependencies import AdminUser, CurrentUser
 from app.examples import (
     CONFLICT_RESPONSE,
     CREATE_USER_EXAMPLES,
@@ -24,7 +30,7 @@ from app.examples import (
     USER_ID_EXAMPLES,
     VALIDATION_RESPONSE,
 )
-from app.models import User
+from app.models import ROLE_ADMIN, User
 from app.schemas import UserCreate, UserRead
 from app.security import hash_password
 
@@ -39,8 +45,11 @@ DbSession = Annotated[Session, Depends(get_db)]
     "",
     response_model=UserRead,
     status_code=status.HTTP_201_CREATED,
-    summary="Создать пользователя",
+    summary="Создать пользователя (только для администратора)",
     description="""Создаёт пользователя и сохраняет его в PostgreSQL.
+
+Ручка защищена RBAC: доступна только пользователю с ролью `admin`. Роль
+задаётся полем `role` (по умолчанию `user`).
 
 Пароль принимается в открытом виде только в этом запросе и сразу превращается
 в Argon2id-хеш — в базе и в ответах API пароля нет.
@@ -49,8 +58,10 @@ DbSession = Annotated[Session, Depends(get_db)]
 
 ```bash
 curl -X POST http://localhost:8000/users \\
+  -H 'Authorization: Bearer <admin-token>' \\
   -H 'Content-Type: application/json' \\
-  -d '{"email": "ivan.petrov@example.com", "full_name": "Иван Петров", "password": "secret123"}'
+  -d '{"email": "ivan.petrov@example.com", "full_name": "Иван Петров",
+       "password": "secret123", "role": "user"}'
 ```
 
 Поле `email` должно быть уникальным: повторная отправка того же адреса вернёт `409`.
@@ -60,6 +71,8 @@ curl -X POST http://localhost:8000/users \\
             "description": "Пользователь успешно создан и сохранён в базе",
             "content": {"application/json": {"example": USER_CREATED_EXAMPLE}},
         },
+        401: UNAUTHORIZED_RESPONSE,
+        403: {"description": "Роль не позволяет создавать пользователей"},
         409: CONFLICT_RESPONSE,
         422: VALIDATION_RESPONSE,
     },
@@ -68,12 +81,14 @@ def create_user(
     payload: Annotated[UserCreate, Body(openapi_examples=CREATE_USER_EXAMPLES)],
     db: DbSession,
     request: Request,
+    admin: AdminUser,
 ) -> User:
     """Создаёт пользователя; email должен быть уникальным."""
     user = User(
         email=payload.email,
         full_name=payload.full_name,
         hashed_password=hash_password(payload.password),
+        role=payload.role,
     )
     db.add(user)
     try:
@@ -81,7 +96,7 @@ def create_user(
         entry = add_entry(
             db,
             action=AuditAction.USER_CREATED,
-            actor_id=user.id,
+            actor_id=admin.id,
             target_user_id=user.id,
             email=user.email,
             request=request,
@@ -105,14 +120,46 @@ def create_user(
 
 
 @router.get(
+    "",
+    response_model=list[UserRead],
+    summary="Список пользователей (только для администратора)",
+    description="""Возвращает всех пользователей из PostgreSQL.
+
+Ручка защищена RBAC: доступна только пользователю с ролью `admin`.
+
+**Пример запроса:**
+
+```bash
+curl http://localhost:8000/users -H 'Authorization: Bearer <admin-token>'
+```
+""",
+    responses={
+        200: {
+            "description": "Список пользователей",
+            "content": {"application/json": {"example": [USER_CREATED_EXAMPLE]}},
+        },
+        401: UNAUTHORIZED_RESPONSE,
+        403: {"description": "Роль не позволяет просматривать пользователей"},
+    },
+)
+def list_users(
+    db: DbSession,
+    admin: AdminUser,
+) -> list[User]:
+    """Возвращает всех пользователей (для администратора)."""
+    users = db.scalars(select(User).order_by(User.id)).all()
+    return list(users)
+
+
+@router.get(
     "/me",
     response_model=UserRead,
     summary="Текущий пользователь",
     description="""Возвращает пользователя, которому принадлежит access-токен.
 
 Ручка защищена: нужен заголовок `Authorization: Bearer <token>`, который
-выдаёт `POST /auth/login`. В Swagger UI токен подставляется после нажатия
-**Authorize**.
+выдаёт `POST /auth/login` или SSO-вход (`/auth/sso/start`). В Swagger UI
+токен подставляется после нажатия **Authorize**.
 
 **Пример запроса:**
 
@@ -136,13 +183,16 @@ def read_current_user(current_user: CurrentUser) -> User:
 @router.get(
     "/{user_id}",
     response_model=UserRead,
-    summary="Получить пользователя по id",
+    summary="Получить пользователя по id (себя или для администратора)",
     description="""Возвращает пользователя из PostgreSQL по идентификатору.
+
+Доступна администратору или самому владельцу профиля. Для обычного
+пользователя чужой профиль вернёт `403`.
 
 **Пример запроса:**
 
 ```bash
-curl http://localhost:8000/users/1
+curl http://localhost:8000/users/1 -H 'Authorization: Bearer <token>'
 ```
 
 Если пользователя с таким id нет — вернётся `404`.
@@ -152,6 +202,8 @@ curl http://localhost:8000/users/1
             "description": "Пользователь найден",
             "content": {"application/json": {"example": USER_CREATED_EXAMPLE}},
         },
+        401: UNAUTHORIZED_RESPONSE,
+        403: {"description": "Недостаточно прав для просмотра чужого профиля"},
         404: NOT_FOUND_RESPONSE,
         422: VALIDATION_RESPONSE,
     },
@@ -162,12 +214,18 @@ def read_user(
         Path(description="Идентификатор пользователя", openapi_examples=USER_ID_EXAMPLES),
     ],
     db: DbSession,
+    current_user: CurrentUser,
 ) -> User:
-    """Возвращает пользователя или 404, если он не найден."""
+    """Возвращает пользователя: администратору или владельцу; иначе 403/404."""
     user = db.get(User, user_id)
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Пользователь не найден",
+        )
+    if current_user.role != ROLE_ADMIN and current_user.id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Недостаточно прав",
         )
     return user

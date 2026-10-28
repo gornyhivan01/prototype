@@ -8,20 +8,27 @@
 
 ## Что внутри
 
-| Ручка | Назначение |
-|---|---|
-| `GET /health` | Проверка, что сервис жив |
-| `POST /users` | Создание пользователя (пароль сохраняется как Argon2id-хеш) |
-| `POST /auth/login` | Вход по email и паролю, выдача JWT |
-| `GET /auth/sso/start` | Вход через SSO: редирект в Keycloak (state + nonce + PKCE) |
-| `GET /auth/sso/callback` | Callback Keycloak: обмен кода на токены, проверка `id_token`, выпуск своего JWT |
-| `GET /users/me` | Текущий пользователь (защищена, нужен JWT) |
-| `GET /users/{id}` | Просмотр пользователя (чтение из PostgreSQL) |
+| Ручка | Назначение | Доступ |
+|---|---|---|
+| `GET /health` | Проверка, что сервис жив | открыто |
+| `POST /users` | Создание пользователя (пароль → Argon2id) | только `admin` |
+| `GET /users` | Список пользователей | только `admin` |
+| `GET /users/me` | Текущий пользователь (профиль) | авторизованным |
+| `GET /users/{id}` | Пользователь по id | `admin` или владелец |
+| `POST /auth/login` | Вход по email и паролю, выдача JWT | открыто |
+| `GET /auth/sso/start` | Вход через SSO: редирект в Keycloak | открыто |
+| `GET /auth/sso/callback` | Callback Keycloak → свой JWT → дашборд | открыто |
 
 Автоматические **Swagger UI** (`/docs`) и **OpenAPI** (`/openapi.json`).
 
 Создание пользователя и попытки входа пишутся в таблицу `audit_log` и в лог
 приложения — см. раздел [«Аудит»](#аудит).
+
+Также есть **простейший фронтенд** без сборки (статика из `app/static/`):
+
+- `/` — лендинг с кнопкой «Войти через SSO»;
+- `/dashboard` — дашборд по роли: обычному пользователю профиль, администратору
+  список пользователей и форма их создания.
 
 ## Стек
 
@@ -34,8 +41,13 @@
 - **SSO: Keycloak 26 (OIDC/OAuth2, Authorization Code + PKCE S256)** —
   `docker compose up -d keycloak`, реалм импортируется из
   `keycloak/realm-export.json`; проверка `id_token` по JWKS (RS256), кэш ключей
+- **RBAC:** роли `admin` / `user`. Источник ролей — **Keycloak** (realm-роль
+  `admin` через claims `realm_access.roles`); локальная колонка `users.role`
+  отражает её для проверок доступа
 - HTTP-клиент для SSO: `httpx`; PKCE и валидация токенов — собственный код в
   `app/sso.py`
+- Фронтенд: статика без сборки (HTML/CSS/JS в `app/static/`), токен из
+  callback доставляется дашборду во фрагменте URL
 - Тесты: pytest + pytest-cov, SQLite в памяти; OpenID-проверки — с фейковым JWKS
 
 ## Быстрый старт
@@ -67,14 +79,23 @@ uv run uvicorn app.main:app --reload
 
 ## Аутентификация
 
-1. **Регистрация.** `POST /users` принимает пароль (8–128 символов) и сохраняет
-   только его Argon2id-хеш. В ответе и в базе исходного пароля нет.
+1. **Создание пользователя.** `POST /users` принимает email, пароль (8–128
+   символов) и роль (`admin`/`user`) и сохраняет только Argon2id-хеш. Ручка
+   доступна **только администратору** — обычные пользователи появляются через
+   SSO-вход или их создаёт admin.
 2. **Вход.** `POST /auth/login` проверяет email и пароль и возвращает
    `access_token` (JWT) со сроком жизни `ACCESS_TOKEN_EXPIRE_MINUTES`
    (по умолчанию 30 минут). В ответе есть `expires_in` — тот же срок в секундах.
 3. **Защищённая ручка.** `GET /users/me` читает заголовок
    `Authorization: Bearer <token>`, проверяет подпись и срок действия и
    возвращает владельца токена. Просроченный токен даёт `401`.
+
+**Роли (RBAC).** Роль хранится в `users.role` (`admin` / `user`). При SSO-входе
+роль приходит из Keycloak: если у пользователя в реалме есть роль `admin`
+(claims `realm_access.roles`), локальная роль повышается до `admin`.
+Администратору доступны список пользователей (`GET /users`) и их создание
+(`POST /users`); обычный пользователь видит только свой профиль. Проверки —
+в `app/dependencies.py` (`require_roles`).
 
 > **Почему Argon2id.** У каждого пароля своя соль, поэтому одинаковые пароли
 > дают разные хеши. Argon2id намеренно требует много памяти и времени, что
@@ -111,12 +132,13 @@ email в поле *username* и пароль — токен подставитс
 
 ```
 Браузер ── GET /auth/sso/start (state+nonce+PKCE) ── 302 ─► Keycloak (:8080)
-   ▲                                                      │ вход/регистрация
+   ▲                                                      │ логин/пароль
    │                                                      ▼
    │◄──────────── /auth/sso/callback (code + state) ──────┤
    │  code → /token (PKCE) → проверка id_token (RS256/JWKS,
-   │  iss/aud/exp/nonce) → поиск пользователя по email │
-   └───────────────────► свой JWT (страница с токеном) ───┘
+   │  iss/aud/exp/nonce) → поиск/создание пользователя,  │
+   │  роль из realm_access.roles                         │
+   └──────────────► свой JWT → редирект на /dashboard ────┘
 ```
 
 **Запуск:**
@@ -125,7 +147,7 @@ email в поле *username* и пароль — токен подставитс
 # 1. Keycloak + PostgreSQL
 docker compose up -d
 
-# 2. Тестовый пользователь SSO (sso.user@example.com / password123)
+# 2. Роли и тестовые учётки (admin и обычный пользователь)
 uv run python scripts/keycloak-bootstrap.py
 
 # 3. Сервис (как обычно)
@@ -133,8 +155,9 @@ uv run alembic upgrade head
 uv run uvicorn app.main:app --reload
 ```
 
-**Вход:** откройте http://localhost:8000/auth/sso/start — Keycloak попросит
-учётку, после входа сервис покажет страницу с JWT и ссылку на Swagger.
+**Вход:** откройте http://localhost:8000/ — кнопка «Войти через SSO» → форма
+Keycloak → после входа откроется дашборд `/dashboard` с профилем (или панелью
+администратора, если роль `admin`).
 
 **Что внутри (при желании изучить):**
 
@@ -144,9 +167,12 @@ uv run uvicorn app.main:app --reload
 - `keycloak/realm-export.json` — реалм `prototype` и клиент `prototype-web`
   (confidential, Authorization Code + PKCE), импортируются при старте
   (`--import-realm`).
-- `scripts/keycloak-bootstrap.py` — создание тестового пользователя через
-  Admin REST API (идемпотентно).
-- `app/routers/auth.py::sso_start/sso_callback` — эндпоинты потока.
+- `scripts/keycloak-bootstrap.py` — создаёт роли и тестовые учётки
+  (`admin@example.com` и `sso.user@example.com`) через Admin REST API
+  (идемпотентно).
+- `app/routers/auth.py::sso_start/sso_callback` — эндпоинты потока; роль из
+  `realm_access.roles` (для этого клиенту добавлен protocol-мэппер).
+- `app/static/` — лендинг и дашборд (HTML/CSS/JS без сборки).
 
 **Параметры (`.env`, все опциональны):**
 
@@ -171,25 +197,32 @@ single logout.
 
 ### 1. Вход через браузер
 
-Откройте в браузере:
+Откройте главную страницу и нажмите кнопку:
 
 ```
-http://localhost:8000/auth/sso/start
+http://localhost:8000/
 ```
 
-Цепочка: наш сервис редиректит в Keycloak (`/realms/prototype/protocol/
+Цепочка: сервис перенаправляет в Keycloak (`/realms/prototype/protocol/
 openid-connect/auth`), Keycloak показывает форму входа (`login-actions/
 authenticate?…`), после входа возвращает браузер на
-`/auth/sso/callback?code=…&state=…`, и сервис показывает страницу с JWT.
-Скопируйте токен → **Swagger** (`/docs`) → **Authorize** → вставьте без слова
-`Bearer` (или добавьте его в `curl`, см. ниже).
+`/auth/sso/callback?code=…&state=…` — сервис проверяет токен, выпускает свой
+JWT и перенаправляет на **дашборд** `/dashboard#access_token=…`. Дашборд
+показывает профиль, а для роли `admin` — список пользователей и форму их
+создания.
+
+Токен во фрагменте URL не попадает в логи сервера; дашборд переносит его в
+`sessionStorage` и при первом же входе убирает из адресной строки
+(`history.replaceState`).
 
 ### 2. Учётные данные Keycloak
 
-| Источник | email | password |
+После `uv run python scripts/keycloak-bootstrap.py` есть две учётки:
+
+| email | password | роль |
 |---|---|---|
-| Скрипт `scripts/keycloak-bootstrap.py` | `sso.user@example.com` | `password123` |
-| Admin-консоль (`http://localhost:8080`, admin/admin) → **Users** | любой | задаётся при создании / Reset Password |
+| `admin@example.com` | `password123` | `admin` (управление пользователями) |
+| `sso.user@example.com` | `password123` | `user` (профиль) |
 
 Пароль проверяет **сам Keycloak** (у него свой Argon2), наш сервис пароли SSO
 не знает и не хранит.
@@ -197,12 +230,16 @@ authenticate?…`), после входа возвращает браузер н
 ### 3. Использование токена SSO в API
 
 ```bash
-# 1. Токен получен на странице callback — сохраните его в переменную:
+# 1. Токен получается в браузере на дашборде; вручную — с callback-страницы.
 TOKEN="eyJhbGciOiJIUzI1NiIsInR5…"
 
-# 2. Защищённая ручка:
+# 2. Свой профиль (у всех ролей):
 curl -s http://localhost:8000/users/me -H "Authorization: Bearer $TOKEN"
-# {"id":1,"email":"sso.user@example.com","full_name":"SSO User","created_at":"..."}
+# {"id":1,...,"role":"user","created_at":"..."}
+
+# 3. Список пользователей — только для admin:
+curl -s http://localhost:8000/users -H "Authorization: Bearer $TOKEN"
+# для роли user -> 403
 ```
 
 Парольный вход работает так же (`POST /auth/login`) и тоже выдаёт JWT —
@@ -216,6 +253,7 @@ curl -s http://localhost:8000/users/me -H "Authorization: Bearer $TOKEN"
 | **`400` — «Сессия SSO не найдена или истекла»** | `/auth/sso/callback` | `state` истёк (10 минут) или callback открыт вручную, без перехода через `/auth/sso/start` | заново открыть `/auth/sso/start` |
 | **`400` — «Не удалось войти через SSO»** | `/auth/sso/callback` | `id_token` не прошёл проверку (подпись/JWKS или claims `iss`/`aud`/`exp`/`nonce`) | сверить `KEYCLOAK_URL`, `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET` с реалмом; подробности — в логе uvicorn |
 | **`401` — «Не удалось проверить токен»** | `/users/*` | нет или просрочен JWT | получить свежий токен (SSO или `/auth/login`) |
+| **`403` — «Недостаточно прав»** | `/users`, `POST /users`, чужой `/users/{id}` | роль `user` пытается делать админские операции | войти как `admin` (или создать админа в Keycloak) |
 | **`403` — «Парольный вход отключён»** | `/auth/login` | `SSO_ONLY=true` | входить только через `/auth/sso/start` |
 
 ### Почему Keycloak пишет «Invalid username or password»?
@@ -248,13 +286,23 @@ curl -s http://localhost:8000/health
 # {"status":"ok"}
 ```
 
-### 2. Регистрация и хранение пароля
+### 2. Создание пользователя (только для администратора)
+
+Создать пользователя может только `admin`. Токен админа удобно получить через
+SSO: войдите как `admin@example.com` в браузере (дашборд → Swagger использует
+тот же токен), или возьмите токен с дашборда (вкладка «Сеть» → `users/me` →
+заголовок `Authorization`).
 
 ```bash
+TOKEN="eyJhbGciOiJIUzI1NiIsInR5…"   # токен администратора
+
 curl -s -X POST http://localhost:8000/users \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"email": "ivan.petrov@example.com", "full_name": "Иван Петров", "password": "secret123"}'
-# {"id":1,"email":"ivan.petrov@example.com","full_name":"Иван Петров","created_at":"..."}
+  -d '{"email": "ivan.petrov@example.com", "full_name": "Иван Петров",
+       "password": "secret123", "role": "user"}'
+# {"id":2,"email":"ivan.petrov@example.com","full_name":"Иван Петров",
+#  "role":"user","created_at":"..."}
 ```
 
 В ответе нет ни пароля, ни хеша. Посмотрим, что лежит в PostgreSQL:

@@ -20,8 +20,8 @@ _USER: dict[str, Any] = {
 }
 
 
-def _create_user(client: TestClient) -> dict[str, Any]:
-    response = client.post("/users", json=_USER)
+def _create_user(client: TestClient, headers: dict[str, str]) -> dict[str, Any]:
+    response = client.post("/users", json=_USER, headers=headers)
     assert response.status_code == 201
     return response.json()
 
@@ -37,26 +37,31 @@ def _count_entries(db_session: Session) -> int:
     return db_session.scalar(select(func.count()).select_from(AuditLog)) or 0
 
 
-def test_create_user_writes_audit_entry(client: TestClient, db_session: Session) -> None:
-    """Регистрация сохраняет событие user.created."""
-    user = _create_user(client)
+def test_create_user_writes_audit_entry(
+    client: TestClient, db_session: Session, admin_headers: dict[str, str]
+) -> None:
+    """Создание пользователя админом сохраняет событие user.created."""
+    user = _create_user(client, admin_headers)
+    admin = client.get("/users/me", headers=admin_headers).json()
 
-    entry = db_session.scalar(select(AuditLog))
+    entry = db_session.scalar(select(AuditLog).where(AuditLog.action == AuditAction.USER_CREATED))
 
     assert entry is not None
     assert entry.action == AuditAction.USER_CREATED
-    assert entry.actor_id == user["id"]
-    assert entry.target_user_id == user["id"]
+    assert entry.actor_id == admin["id"]  # кем создан
+    assert entry.target_user_id == user["id"]  # кто создан
     assert entry.email == _USER["email"]
     assert entry.ip_address == "testclient"
     assert entry.details is None
     assert entry.created_at is not None
 
 
-def test_create_user_logs_audit_without_password(client: TestClient, caplog: Any) -> None:
+def test_create_user_logs_audit_without_password(
+    client: TestClient, caplog: Any, admin_headers: dict[str, str]
+) -> None:
     """Событие дублируется в лог, но пароль туда не попадает."""
     with caplog.at_level(logging.INFO, logger="app.audit"):
-        _create_user(client)
+        _create_user(client, admin_headers)
 
     assert "action=user.created" in caplog.text
     assert _USER["email"] in caplog.text
@@ -64,14 +69,14 @@ def test_create_user_logs_audit_without_password(client: TestClient, caplog: Any
 
 
 def test_duplicate_email_is_logged_but_not_saved(
-    client: TestClient, db_session: Session, caplog: Any
+    client: TestClient, db_session: Session, caplog: Any, admin_headers: dict[str, str]
 ) -> None:
     """Повторная регистрация откатывается и оставляет только warning."""
-    _create_user(client)
+    _create_user(client, admin_headers)
     before = _count_entries(db_session)
 
     with caplog.at_level(logging.WARNING, logger="app.audit"):
-        response = client.post("/users", json=_USER)
+        response = client.post("/users", json=_USER, headers=admin_headers)
 
     assert response.status_code == 409
     assert _count_entries(db_session) == before
@@ -79,13 +84,18 @@ def test_duplicate_email_is_logged_but_not_saved(
     assert "reason=duplicate_email" in caplog.text
 
 
-def test_login_success_writes_audit_entry(client: TestClient, db_session: Session) -> None:
+def test_login_success_writes_audit_entry(
+    client: TestClient, db_session: Session, admin_headers: dict[str, str]
+) -> None:
     """Успешный вход сохраняет событие auth.login.success."""
-    user = _create_user(client)
+    user = _create_user(client, admin_headers)
     assert _login(client).status_code == 200
 
     entry = db_session.scalars(
-        select(AuditLog).where(AuditLog.action == AuditAction.LOGIN_SUCCESS)
+        select(AuditLog).where(
+            AuditLog.action == AuditAction.LOGIN_SUCCESS,
+            AuditLog.email == _USER["email"],
+        )
     ).one()
 
     assert entry.actor_id == user["id"]
@@ -94,14 +104,19 @@ def test_login_success_writes_audit_entry(client: TestClient, db_session: Sessio
     assert entry.details is None
 
 
-def test_login_failure_writes_audit_entry(client: TestClient, db_session: Session) -> None:
+def test_login_failure_writes_audit_entry(
+    client: TestClient, db_session: Session, admin_headers: dict[str, str]
+) -> None:
     """Неверный пароль сохраняет событие auth.login.failed с причиной."""
-    _create_user(client)
+    _create_user(client, admin_headers)
     response = _login(client, password="wrong-password")  # noqa: S106 — тестовые данные
     assert response.status_code == 401
 
     entry = db_session.scalars(
-        select(AuditLog).where(AuditLog.action == AuditAction.LOGIN_FAILED)
+        select(AuditLog).where(
+            AuditLog.action == AuditAction.LOGIN_FAILED,
+            AuditLog.email == _USER["email"],
+        )
     ).one()
 
     assert entry.actor_id is None
@@ -141,9 +156,11 @@ def test_login_with_long_username_truncates_audit_email(
     assert entry.email == long_email[:320]
 
 
-def test_audit_does_not_store_password_or_token(client: TestClient, db_session: Session) -> None:
+def test_audit_does_not_store_password_or_token(
+    client: TestClient, db_session: Session, admin_headers: dict[str, str]
+) -> None:
     """В аудите нет ни пароля, ни access-токена."""
-    _create_user(client)
+    _create_user(client, admin_headers)
     token = _login(client).json()["access_token"]
 
     entries = db_session.scalars(select(AuditLog)).all()

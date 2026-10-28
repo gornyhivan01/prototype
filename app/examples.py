@@ -15,10 +15,11 @@ USER_CREATED_EXAMPLE: dict[str, Any] = {
     "id": 1,
     "email": "ivan.petrov@example.com",
     "full_name": "Иван Петров",
+    "role": "user",
     "created_at": "2026-10-19T12:00:00Z",
 }
 
-# --- Именованные примеры тела запроса (POST /users) ---
+# --- Именованные примеры тела запроса (POST /users, роль задаёт админ) ---
 CREATE_USER_EXAMPLES: dict[str, Any] = {
     "russian": {
         "summary": "Пользователь с именем на русском",
@@ -26,14 +27,16 @@ CREATE_USER_EXAMPLES: dict[str, Any] = {
             "email": "ivan.petrov@example.com",
             "full_name": "Иван Петров",
             "password": "secret123",
+            "role": "user",
         },
     },
-    "latin": {
-        "summary": "Пользователь с латинским именем",
+    "admin": {
+        "summary": "Пользователь с ролью администратора",
         "value": {
-            "email": "john.doe@example.com",
-            "full_name": "John Doe",
+            "email": "chief@example.com",
+            "full_name": "Главный",
             "password": "secret123",
+            "role": "admin",
         },
     },
 }

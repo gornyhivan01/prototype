@@ -6,12 +6,18 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
+from app.models import ROLE_ADMIN, ROLE_USER
+
+# Разрешённые роли (RBAC). Роль админа при SSO приходит из Keycloak.
+UserRole = Literal[ROLE_ADMIN, ROLE_USER]
+
 
 class UserCreate(BaseModel):
-    """Данные для создания пользователя."""
+    """Данные для создания пользователя (только для администратора)."""
 
     model_config = ConfigDict(
         extra="forbid",
@@ -36,6 +42,10 @@ class UserCreate(BaseModel):
         description="Пароль (8–128 символов); хранится только как Argon2id-хеш",
         examples=["secret123"],
     )
+    role: UserRole = Field(
+        default=ROLE_USER,
+        description="Роль в сервисе: admin или user (по умолчанию user)",
+    )
 
 
 class UserRead(BaseModel):
@@ -46,6 +56,7 @@ class UserRead(BaseModel):
     id: int
     email: EmailStr
     full_name: str
+    role: str
     created_at: datetime
 
 

@@ -36,7 +36,7 @@ def test_openapi_has_russian_examples(client: TestClient) -> None:
     spec = client.get("/openapi.json").json()
 
     post_users = spec["paths"]["/users"]["post"]
-    assert post_users["summary"] == "Создать пользователя"
+    assert post_users["summary"] == "Создать пользователя (только для администратора)"
 
     body_examples = post_users["requestBody"]["content"]["application/json"]["examples"]
     assert "russian" in body_examples

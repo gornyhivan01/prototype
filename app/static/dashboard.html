@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Профиль — дашборд</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="card">
+    <div class="topline">
+      <h1>Дашборд</h1>
+      <button id="logout" class="btn ghost" type="button">Выйти</button>
+    </div>
+
+    <div id="status" class="muted">Загрузка…</div>
+
+    <!-- Секция обычного пользователя -->
+    <section id="profile" hidden>
+      <h2>Мой профиль</h2>
+      <dl id="profile-fields"></dl>
+    </section>
+
+    <!-- Секция администратора -->
+    <section id="admin-panel" hidden>
+      <h2>Управление пользователями</h2>
+
+      <h3>Создать пользователя</h3>
+      <form id="create-form" class="form">
+        <label>Email <input name="email" type="email" autocomplete="off" required placeholder="user@example.com"></label>
+        <label>Имя <input name="full_name" autocomplete="off" required placeholder="Иван Петров"></label>
+        <label>Пароль <input name="password" type="password" minlength="8" autocomplete="new-password" required placeholder="не короче 8 символов"></label>
+        <label>Роль
+          <select name="role">
+            <option value="user">user — обычный пользователь</option>
+            <option value="admin">admin — администратор</option>
+          </select>
+        </label>
+        <button class="btn" type="submit">Создать</button>
+      </form>
+      <p id="create-msg" class="muted"></p>
+
+      <h3>Пользователи</h3>
+      <table class="table">
+        <thead><tr><th>id</th><th>Email</th><th>Имя</th><th>Роль</th><th></th></tr></thead>
+        <tbody id="users-list"></tbody>
+      </table>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

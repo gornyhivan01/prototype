@@ -16,7 +16,13 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from app.database import get_db
 from app.dependencies import AdminUser, CurrentUser
-from app.examples import AUDIT_PAGE_EXAMPLE, UNAUTHORIZED_RESPONSE, VALIDATION_RESPONSE
+from app.examples import (
+    AUDIT_ACTION_EXAMPLES,
+    AUDIT_EMAIL_EXAMPLES,
+    AUDIT_PAGE_EXAMPLE,
+    UNAUTHORIZED_RESPONSE,
+    VALIDATION_RESPONSE,
+)
 from app.models import AuditLog, User
 from app.schemas import AuditEntryRead, AuditPage
 
@@ -28,11 +34,19 @@ Limit = Annotated[int, Query(ge=1, le=200, description="Размер стран�
 Offset = Annotated[int, Query(ge=0, description="Сколько записей пропустить")]
 ActionFilter = Annotated[
     str | None,
-    Query(max_length=50, description="Точное имя действия, например `auth.login.success`"),
+    Query(
+        max_length=50,
+        description="Точное имя действия, например `auth.login.success`",
+        openapi_examples=AUDIT_ACTION_EXAMPLES,
+    ),
 ]
 EmailFilter = Annotated[
     str | None,
-    Query(max_length=320, description="Подстрока email (регистронезависимо)"),
+    Query(
+        max_length=320,
+        description="Подстрока email (регистронезависимо)",
+        openapi_examples=AUDIT_EMAIL_EXAMPLES,
+    ),
 ]
 
 

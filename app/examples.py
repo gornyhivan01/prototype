@@ -54,6 +54,16 @@ USER_ID_EXAMPLES: dict[str, Any] = {
 }
 
 # --- Журнал аудита (GET /audit, GET /audit/me) ---
+AUDIT_ACTION_EXAMPLES: dict[str, Any] = {
+    "login_success": {"summary": "Успешные входы", "value": "auth.login.success"},
+    "user_created": {"summary": "Создание пользователей", "value": "user.created"},
+    "user_deleted": {"summary": "Удаление пользователей", "value": "user.deleted"},
+}
+
+AUDIT_EMAIL_EXAMPLES: dict[str, Any] = {
+    "domain": {"summary": "Все события домена example.com", "value": "example.com"},
+}
+
 AUDIT_PAGE_EXAMPLE: dict[str, Any] = {
     "total": 2,
     "limit": 50,

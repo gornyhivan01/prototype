@@ -286,3 +286,26 @@ def exchange_id_token_claims(*, code: str, state: str, request_url: str) -> dict
     if "id_token" not in tokens:
         raise SsoError("Провайдер не вернул ID-токен")
     return validate_id_token(tokens["id_token"], pending.nonce)
+
+
+def build_logout_url() -> str:
+    """Строит URL завершения SSO-сессии в Keycloak (OIDC ``end_session``).
+
+    ``post_logout_redirect_uri`` должен быть разрешён у клиента
+    (``postLogoutRedirectUris`` в keycloak/realm-export.json), иначе
+    Keycloak после выхода покажет служебную страницу.
+    """
+    settings = get_settings()
+    metadata = _discovery(settings)
+    endpoint = metadata.get("end_session_endpoint")
+    if not endpoint:
+        return "/"
+    query = urlencode(
+        {
+            "post_logout_redirect_uri": settings.sso_post_logout_redirect_uri,
+            # Keycloak требует client_id (или id_token_hint) вместе с
+            # post_logout_redirect_uri.
+            "client_id": settings.keycloak_client_id,
+        }
+    )
+    return f"{endpoint}?{query}"

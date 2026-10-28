@@ -48,8 +48,9 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
 
   $("logout").onclick = () => {
+    // Чистим локальный токен и завершаем SSO-сессию в Keycloak (single logout).
     sessionStorage.removeItem(TOKEN_KEY);
-    window.location.href = "/";
+    window.location.href = "/auth/sso/logout";
   };
 
   try {

@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     keycloak_client_id: str = "prototype-web"
     keycloak_client_secret: str = "prototype-web-secret"  # noqa: S105 — dev-секрет
     sso_redirect_uri: str = "http://localhost:8000/auth/sso/callback"
+    # Куда Keycloak вернёт после single logout. Должен быть в списке
+    # postLogoutRedirectUris клиента (keycloak/realm-export.json).
+    sso_post_logout_redirect_uri: str = "http://localhost:8000/"
 
 
 @lru_cache

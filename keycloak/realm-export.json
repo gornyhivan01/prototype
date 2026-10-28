@@ -29,6 +29,9 @@
       "redirectUris": [
         "http://localhost:8000/auth/sso/callback"
       ],
+      "attributes": {
+        "post.logout.redirect.uris": "http://localhost:8000/"
+      },
       "webOrigins": ["http://localhost:8000"],
       "secret": "prototype-web-secret",
       "defaultClientScopes": ["web-origins", "acr", "profile", "roles", "email"],

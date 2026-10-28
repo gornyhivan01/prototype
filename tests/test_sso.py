@@ -300,3 +300,40 @@ def test_callback_rejects_invalid_state(
     response = client.get("/auth/sso/callback?code=abc&state=broken")
     assert response.status_code == 400
     assert "Не удалось войти" in response.text
+
+
+# ---------------------------------------------------------------------------
+# Single logout (Keycloak end_session)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def fake_idp_with_logout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Discovery с end_session_endpoint (для тестов logout)."""
+    settings = get_settings()
+    monkeypatch.setitem(
+        sso._discovery_cache,
+        settings.keycloak_url,
+        {
+            "issuer": ISSUER,
+            "end_session_endpoint": f"{ISSUER}/protocol/openid-connect/logout",
+        },
+    )
+
+
+def test_build_logout_url_uses_end_session(fake_idp_with_logout: None) -> None:
+    """Logout-URL ведёт на end_session_endpoint и возвращает на лендинг."""
+    url = sso.build_logout_url()
+
+    assert url.startswith(f"{ISSUER}/protocol/openid-connect/logout?")
+    assert "post_logout_redirect_uri=http%3A%2F%2Flocalhost%3A8000%2F" in url
+    assert "client_id=prototype-web" in url
+
+
+def test_sso_logout_redirects(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
+    """GET /auth/sso/logout редиректит в Keycloak для single logout."""
+    monkeypatch.setattr(sso, "build_logout_url", lambda: "http://idp/logout?x=1")
+    response = client.get("/auth/sso/logout", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "http://idp/logout?x=1"

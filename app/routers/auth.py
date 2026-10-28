@@ -333,3 +333,24 @@ def sso_callback(
 
     token = create_access_token(subject=str(user.id))
     return HTMLResponse(_dashboard_redirect_page(token))
+
+
+@router.get(
+    "/sso/logout",
+    summary="Выйти из SSO (Keycloak single logout)",
+    description="""Завершает SSO-сессию в Keycloak и возвращает пользователя на `/`.
+
+Локальный JWT приложение не хранит на сервере — дашборд удаляет его из
+`sessionStorage`. Этот эндпоинт дополнительно завершает сессию в **Keycloak**
+(OIDC `end_session`), иначе следующий вход начнётся без запроса учётных данных
+(Keycloak молча продолжит старую сессию — «закешированный» вход).
+""",
+    responses={
+        302: {"description": "Редирект на end_session_endpoint Keycloak"},
+        303: {"description": "Редирект на / (если IdP не отдал end_session)"},
+    },
+)
+def sso_logout() -> RedirectResponse:
+    """Single logout: завершает сессию Keycloak и ведёт обратно на лендинг."""
+    logout_url = sso_module.build_logout_url()
+    return RedirectResponse(logout_url, status_code=status.HTTP_302_FOUND)

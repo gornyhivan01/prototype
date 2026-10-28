@@ -62,6 +62,7 @@ Keycloak** (`GET /auth/sso/start` → callback → свой JWT, редирек�
 | POST | `/auth/login` | Вход по email и паролю, выдача JWT |
 | GET | `/auth/sso/start` | Вход через SSO (Keycloak), редирект в IdP |
 | GET | `/auth/sso/callback` | Callback Keycloak: обмен кода на свой JWT |
+| GET | `/auth/sso/logout` | Single logout: завершает SSO-сессию в Keycloak |
 | GET | `/users/me` | Текущий пользователь (нужен JWT) |
 | GET | `/users/{user_id}` | Пользователь по id (админ или владелец) |
 | DELETE | `/users/{user_id}` | Удаление пользователя (**только admin**; себя удалить нельзя) |

@@ -238,7 +238,10 @@ Keycloak → после входа откроется дашборд `/dashboard
 | `KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASSWORD` | `admin` / `admin` | Admin REST для синхронизации пользователей |
 
 **Админ-консоль Keycloak:** http://localhost:8080, `admin` / `admin`
-(создание пользователей, групп и ролей, брокеринг внешних IdP).
+(создание пользователей, групп и ролей, брокеринг внешних IdP). Это **не**
+вход в приложение: форма консоли называется «Sign in to your account» и
+работает с реалмом `master`, а приложение — это http://localhost:8000/ →
+«Войти через SSO» с формой «Sign in to Prototype» (реалм `prototype`).
 
 **Границы схемы (осознанно):** `state`/`nonce`/verifier хранятся в памяти
 процесса — для одного uvicorn-воркера. Полная федерация (сервис принимает
@@ -301,12 +304,21 @@ curl -s http://localhost:8000/users -H "Authorization: Bearer $TOKEN"
 
 | Что видите | Где | Причина | Решение |
 |---|---|---|---|
+| **`Invalid username or password.`** на форме **«Sign in to your account»** | http://localhost:8080/admin/master/console | это **админ-консоль Keycloak** (реалм `master`), а не приложение; учётки приложения живут в реалме `prototype` и здесь не существуют | войти в консоль как `admin` / `admin`; для входа в приложение открыть http://localhost:8000/ → «Войти через SSO» (форма **«Sign in to Prototype»**) |
 | **`Invalid username or password.`** | форма входа Keycloak (`login-actions/authenticate`) | такого пользователя нет в реалме `prototype` (регистрация отключена) либо неверный пароль | ввести `sso.user@example.com` / `password123`, либо создать/сбросить пользователя в admin-консоли Keycloak |
 | **`400` — «Сессия SSO не найдена или истекла»** | `/auth/sso/callback` | `state` истёк (10 минут) или callback открыт вручную, без перехода через `/auth/sso/start` | заново открыть `/auth/sso/start` |
 | **`400` — «Не удалось войти через SSO»** | `/auth/sso/callback` | `id_token` не прошёл проверку (подпись/JWKS или claims `iss`/`aud`/`exp`/`nonce`) | сверить `KEYCLOAK_URL`, `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET` с реалмом; подробности — в логе uvicorn |
 | **`401` — «Не удалось проверить токен»** | `/users/*` | нет или просрочен JWT | получить свежий токен (SSO или `/auth/login`) |
 | **`403` — «Недостаточно прав»** | `/users`, `POST /users`, `/audit`, чужой `/users/{id}` | роль `user` пытается делать админские операции | войти как `admin` (или создать админа в Keycloak); свои события доступны в `/audit/me` |
 | **`403` — «Парольный вход отключён»** | `/auth/login` | `SSO_ONLY=true` | входить только через `/auth/sso/start` |
+
+> **Две разные формы входа — не перепутайте.** «Sign in to your account» на
+> `http://localhost:8080/admin/master/console` — это админ-консоль Keycloak
+> (реалм `master`, `admin` / `admin`). «Sign in to Prototype» — это вход в
+> приложение: `http://localhost:8000/` → «Войти через SSO» (реалм `prototype`,
+> `admin@example.com` / `password123` или `sso.user@example.com` /
+> `password123`). Пользователи этих реалмов не пересекаются: аккаунт
+> приложения в консоль не пустит, и наоборот.
 
 ### Почему Keycloak пишет «Invalid username or password»?
 

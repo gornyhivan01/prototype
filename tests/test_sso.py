@@ -180,6 +180,44 @@ def test_discovery_uses_internal_url_for_server_endpoints(
     assert metadata["end_session_endpoint"].startswith(public)
 
 
+def test_discovery_cache_expires(monkeypatch: pytest.MonkeyPatch) -> None:
+    """После DISCOVERY_TTL_SECONDS discovery запрашивается заново."""
+    public = "https://auth.example.com"
+    internal = "http://keycloak:8080"
+    settings = Settings(
+        keycloak_url=public,
+        keycloak_internal_url=internal,
+        keycloak_realm="prototype",
+    )
+    calls = 0
+
+    class _Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, str]:
+            return {"issuer": f"{public}/realms/prototype"}
+
+    class _Client:
+        def get(self, _url: str) -> _Response:
+            nonlocal calls
+            calls += 1
+            return _Response()
+
+    monkeypatch.setattr(sso, "_get_http", lambda: _Client())
+    monkeypatch.setattr(sso, "_discovery_cache", {})
+    monkeypatch.setattr(sso, "_discovery_fetched_at", {})
+
+    sso._discovery(settings)
+    assert calls == 1
+
+    cache_key = f"{public}|{internal}"
+    sso._discovery_fetched_at[cache_key] = sso.time.time() - sso.DISCOVERY_TTL_SECONDS - 1
+
+    sso._discovery(settings)
+    assert calls == 2
+
+
 # ---------------------------------------------------------------------------
 # Валидация id_token
 # ---------------------------------------------------------------------------

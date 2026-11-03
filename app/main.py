@@ -7,9 +7,10 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException
@@ -89,6 +90,28 @@ SSO приходит из Keycloak (realm-роль `admin`), локально х
     ],
 )
 
+# Кэширование:
+# - API и auth-ответы не кэшируем: там токены, профили и журнал аудита.
+# - Документация меняется при деплое, поэтому только ревалидация.
+_NO_STORE_PREFIXES = ("/auth", "/users", "/audit", "/health")
+_NO_CACHE_PATHS = ("/docs", "/redoc", "/openapi.json")
+
+
+@app.middleware("http")
+async def _cache_control(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    """Запрещает кэшировать ответы с чувствительными данными."""
+    response = await call_next(request)
+    path = request.url.path
+    if path.startswith(_NO_STORE_PREFIXES):
+        response.headers["Cache-Control"] = "no-store"
+    elif path in _NO_CACHE_PATHS or path.startswith("/docs/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(audit.router)
@@ -126,15 +149,29 @@ def health() -> dict[str, str]:
 
 
 class _SPAStaticFiles(StaticFiles):
-    """Статика SPA: неизвестный путь отдаёт ``index.html`` (клиентский роутер)."""
+    """Статика SPA: неизвестный путь отдаёт ``index.html`` (клиентский роутер).
+
+    Ассеты Vite содержат хэш в имени (``assets/index-<hash>.js``), поэтому их
+    можно кэшировать навсегда. Сам ``index.html`` — нет: после деплоя он должен
+    перевалидироваться, иначе браузер со старым HTML попросит уже удалённые
+    ассеты.
+    """
+
+    _IMMUTABLE_PREFIX = "assets/"
 
     async def get_response(self, path: str, scope: Scope) -> Response:
         try:
-            return await super().get_response(path, scope)
+            response = await super().get_response(path, scope)
+            is_asset = path.lstrip("/").startswith(self._IMMUTABLE_PREFIX)
         except HTTPException as exc:
             if exc.status_code != 404:
                 raise
-            return await super().get_response("index.html", scope)
+            response = await super().get_response("index.html", scope)
+            is_asset = False
+        response.headers["Cache-Control"] = (
+            "public, max-age=31536000, immutable" if is_asset else "no-cache"
+        )
+        return response
 
 
 if (_FRONTEND_DIST / "index.html").is_file():
@@ -148,9 +185,15 @@ else:
     @app.get("/", include_in_schema=False)
     def index() -> FileResponse:
         """Лендинг с кнопкой «Войти через SSO»."""
-        return FileResponse(_STATIC_DIR / "index.html")
+        return FileResponse(
+            _STATIC_DIR / "index.html",
+            headers={"Cache-Control": "no-cache"},
+        )
 
     @app.get("/dashboard", include_in_schema=False)
     def dashboard() -> FileResponse:
         """Дашборд: профиль (все) или управление пользователями (admin)."""
-        return FileResponse(_STATIC_DIR / "dashboard.html")
+        return FileResponse(
+            _STATIC_DIR / "dashboard.html",
+            headers={"Cache-Control": "no-cache"},
+        )

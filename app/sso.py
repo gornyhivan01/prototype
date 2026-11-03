@@ -39,6 +39,10 @@ from app.config import Settings, get_settings
 # Сколько живёт сессия SSO (state/nonce/verifier) на нашем сервере.
 AUTH_STATE_TTL_SECONDS = 600
 
+# Сколько кэшируется discovery IdP. Endpoint'ы и ключи меняются редко, но
+# бессрочный кэш не даёт приложению пережить переезд Keycloak без рестарта.
+DISCOVERY_TTL_SECONDS = 3600
+
 # Время, на которое можно "уехать в прошлое" при проверке exp/iat (часовой сдвиг).
 CLOCK_SKEW_SECONDS = 30
 
@@ -72,6 +76,7 @@ class PendingAuthorization:
 # одного процесса uvicorn этого достаточно.
 _state_store: dict[str, PendingAuthorization] = {}
 _discovery_cache: dict[str, dict[str, Any]] = {}
+_discovery_fetched_at: dict[str, float] = {}
 _jwks_clients: dict[str, Any] = {}
 _http: httpx.Client | None = None
 
@@ -141,7 +146,12 @@ def _discovery(settings: Settings) -> dict[str, Any]:
     cache_key = public_base if server_base == public_base else f"{public_base}|{server_base}"
     cached = _discovery_cache.get(cache_key)
     if cached is not None:
-        return cached
+        fetched_at = _discovery_fetched_at.get(cache_key)
+        # None — запись положена вручную (тесты/фикстуры): считаем свежей.
+        if fetched_at is None or time.time() - fetched_at < DISCOVERY_TTL_SECONDS:
+            return cached
+        _discovery_cache.pop(cache_key, None)
+        _discovery_fetched_at.pop(cache_key, None)
     issuer = _issuer(settings)
     url = f"{server_base}/realms/{settings.keycloak_realm}/.well-known/openid-configuration"
     try:
@@ -165,6 +175,7 @@ def _discovery(settings: Settings) -> dict[str, Any]:
             if isinstance(value, str) and value.startswith(public_base):
                 metadata[key] = server_base + value[len(public_base) :]
     _discovery_cache[cache_key] = metadata
+    _discovery_fetched_at[cache_key] = time.time()
     return metadata
 
 

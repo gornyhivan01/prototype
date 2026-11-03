@@ -66,7 +66,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const response = await fetch(path, { ...init, headers });
+  const response = await fetch(path, { ...init, headers, cache: "no-store" });
   if (response.status === 204) {
     return undefined as T;
   }

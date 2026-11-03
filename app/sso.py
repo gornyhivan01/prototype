@@ -121,13 +121,29 @@ def _issuer(settings: Settings) -> str:
     return f"{settings.keycloak_url.rstrip('/')}/realms/{settings.keycloak_realm}"
 
 
+def _server_base(settings: Settings) -> str:
+    """Адрес Keycloak для запросов из самого сервиса (внутри docker-сети)."""
+    return (settings.keycloak_internal_url or settings.keycloak_url).rstrip("/")
+
+
 def _discovery(settings: Settings) -> dict[str, Any]:
-    """Читает и кэширует /.well-known/openid-configuration."""
-    cached = _discovery_cache.get(settings.keycloak_url)
+    """Читает и кэширует /.well-known/openid-configuration.
+
+    Discovery запрашивается по внутреннему адресу, но issuer проверяется по
+    публичному: Keycloak за reverse-proxy возвращает публичный issuer.
+    Серверные endpoint'ы (token, JWKS) переписываются на внутренний адрес,
+    чтобы не ходить через публичный IP из контейнера.
+    """
+    public_base = settings.keycloak_url.rstrip("/")
+    server_base = _server_base(settings)
+    # В dev (internal не задан) ключ совпадает с keycloak_url — так тесты и
+    # существующий кэш продолжают работать без изменений.
+    cache_key = public_base if server_base == public_base else f"{public_base}|{server_base}"
+    cached = _discovery_cache.get(cache_key)
     if cached is not None:
         return cached
     issuer = _issuer(settings)
-    url = f"{issuer}/.well-known/openid-configuration"
+    url = f"{server_base}/realms/{settings.keycloak_realm}/.well-known/openid-configuration"
     try:
         response = _get_http().get(url)
         response.raise_for_status()
@@ -136,7 +152,19 @@ def _discovery(settings: Settings) -> dict[str, Any]:
     metadata = response.json()
     if metadata.get("issuer") != issuer:
         raise SsoError("Провайдер вернул неожиданный issuer")
-    _discovery_cache[settings.keycloak_url] = metadata
+    if server_base != public_base:
+        metadata = dict(metadata)
+        for key in (
+            "token_endpoint",
+            "jwks_uri",
+            "userinfo_endpoint",
+            "introspection_endpoint",
+            "revocation_endpoint",
+        ):
+            value = metadata.get(key)
+            if isinstance(value, str) and value.startswith(public_base):
+                metadata[key] = server_base + value[len(public_base) :]
+    _discovery_cache[cache_key] = metadata
     return metadata
 
 

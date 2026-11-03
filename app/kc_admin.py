@@ -65,16 +65,21 @@ def _http(
         raise KeycloakAdminError(f"Keycloak недоступен: {exc}") from exc
 
 
+def _base(settings: Any) -> str:
+    """Внутренний адрес Keycloak (в docker-сети), если задан."""
+    return (settings.keycloak_internal_url or settings.keycloak_url).rstrip("/")
+
+
 def _realm_url(settings: Any) -> str:
-    base = settings.keycloak_url.rstrip("/")
-    return f"{base}/admin/realms/{settings.keycloak_realm}"
+    return f"{_base(settings)}/admin/realms/{settings.keycloak_realm}"
 
 
 def _admin_token(settings: Any) -> str:
-    cached, cached_at = _token_cache.get(settings.keycloak_url, ("", 0.0))
+    base = _base(settings)
+    cached, cached_at = _token_cache.get(base, ("", 0.0))
     if cached and time.time() - cached_at < _TOKEN_TTL_SECONDS:
         return cached
-    endpoint = f"{settings.keycloak_url.rstrip('/')}/realms/master/protocol/openid-connect/token"
+    endpoint = f"{base}/realms/master/protocol/openid-connect/token"
     data = {
         "client_id": "admin-cli",
         "grant_type": "password",
@@ -88,7 +93,7 @@ def _admin_token(settings: Any) -> str:
     token = response.get("access_token", "")
     if not token:
         raise KeycloakAdminError("Keycloak не вернул токен админа")
-    _token_cache[settings.keycloak_url] = (token, time.time())
+    _token_cache[base] = (token, time.time())
     return token
 
 

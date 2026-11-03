@@ -17,3 +17,6 @@ htmlcov/
 
 # Прочее
 *.log
+
+# Прод-артефакты (генерируются из keycloak/realm-export.json)
+keycloak/realm-export.prod.json

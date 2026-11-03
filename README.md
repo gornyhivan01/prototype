@@ -230,7 +230,8 @@ Keycloak → после входа откроется дашборд `/dashboard
 |---|---|---|
 | `SSO_ENABLED` | `true` | Включает `/auth/sso/start` |
 | `SSO_ONLY` | `false` | `true` → парольный `/auth/login` возвращает `403` |
-| `KEYCLOAK_URL` | `http://localhost:8080` | Адрес IdP |
+| `KEYCLOAK_URL` | `http://localhost:8080` | Адрес IdP (публичный, для браузера) |
+| `KEYCLOAK_INTERNAL_URL` | пусто | Внутренний адрес для server-to-server (в проде `http://keycloak:8080`) |
 | `KEYCLOAK_REALM` | `prototype` | Реалм |
 | `KEYCLOAK_CLIENT_ID` / `KEYCLOAK_CLIENT_SECRET` | `prototype-web` / `prototype-web-secret` | Клиент (confidential) |
 | `SSO_REDIRECT_URI` | `http://localhost:8000/auth/sso/callback` | Куда Keycloak вернёт браузер |
@@ -514,6 +515,20 @@ LIMIT 20;
 
 IP берётся из `request.client.host`; за reverse-proxy здесь будет адрес прокси,
 поэтому для реального IP нужен разбор `X-Forwarded-For` с доверенным списком.
+
+## Деплой
+
+Прод-стек для одной VM (PostgreSQL + Keycloak + приложение + Caddy) описан в
+`docker-compose.prod.yml`. Пошаговая инструкция для Yandex Cloud —
+[`docs/DEPLOY_YANDEX_CLOUD.md`](docs/DEPLOY_YANDEX_CLOUD.md).
+
+Коротко:
+
+```bash
+cp deploy/.env.prod.example .env          # заполнить адреса и секреты
+docker compose -f docker-compose.prod.yml build app
+SKIP_PULL=1 ./deploy/deploy.sh --bootstrap
+```
 
 ## Тесты и покрытие
 

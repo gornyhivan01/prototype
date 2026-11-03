@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import sso
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.models import User
 
 ISSUER = "http://localhost:8080/realms/prototype"
@@ -135,6 +135,49 @@ def test_state_store_used_and_pruned(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "state=" in url and "nonce=" in url
     assert state in sso._state_store
     sso._state_store.clear()
+
+
+def test_discovery_uses_internal_url_for_server_endpoints(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Discovery берётся изнутри, а браузерные endpoint'ы остаются публичными."""
+    public = "https://auth.example.com"
+    internal = "http://keycloak:8080"
+    settings = Settings(
+        keycloak_url=public,
+        keycloak_internal_url=internal,
+        keycloak_realm="prototype",
+    )
+
+    class _Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, str]:
+            base = f"{public}/realms/prototype"
+            return {
+                "issuer": base,
+                "authorization_endpoint": f"{base}/protocol/openid-connect/auth",
+                "token_endpoint": f"{base}/protocol/openid-connect/token",
+                "jwks_uri": f"{base}/protocol/openid-connect/certs",
+                "end_session_endpoint": f"{base}/protocol/openid-connect/logout",
+            }
+
+    class _Client:
+        def get(self, url: str) -> _Response:
+            assert url == f"{internal}/realms/prototype/.well-known/openid-configuration"
+            return _Response()
+
+    monkeypatch.setattr(sso, "_get_http", lambda: _Client())
+    monkeypatch.setattr(sso, "_discovery_cache", {})
+
+    metadata = sso._discovery(settings)
+
+    assert metadata["issuer"] == f"{public}/realms/prototype"
+    assert metadata["token_endpoint"].startswith(internal)
+    assert metadata["jwks_uri"].startswith(internal)
+    assert metadata["authorization_endpoint"].startswith(public)
+    assert metadata["end_session_endpoint"].startswith(public)
 
 
 # ---------------------------------------------------------------------------

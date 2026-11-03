@@ -1,0 +1,17 @@
+# Прод-конфиг Caddy: два хоста, автоматический TLS (Let's Encrypt).
+# Значения APP_HOST/AUTH_HOST подставляет docker compose из .env.
+#
+# Без покупки домена используйте sslip.io:
+#   APP_HOST=app.<публичный-IP>.sslip.io
+#   AUTH_HOST=auth.<публичный-IP>.sslip.io
+# Эти имена резолвятся в указанный IP, и Caddy выпускает настоящий сертификат.
+
+{$APP_HOST} {
+	encode zstd gzip
+	reverse_proxy app:8000
+}
+
+{$AUTH_HOST} {
+	encode zstd gzip
+	reverse_proxy keycloak:8080
+}

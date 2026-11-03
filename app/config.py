@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     sso_enabled: bool = True
     sso_only: bool = False
     keycloak_url: str = "http://localhost:8080"
+    # Внутренний адрес Keycloak для server-to-server вызовов (token, JWKS,
+    # Admin REST), когда публичный URL доступен только снаружи. Пусто —
+    # используется keycloak_url (dev).
+    keycloak_internal_url: str = ""
     keycloak_realm: str = "prototype"
     keycloak_client_id: str = "prototype-web"
     keycloak_client_secret: str = "prototype-web-secret"  # noqa: S105 — dev-секрет

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Создаёт роли и пользователей SSO в реалме ``prototype`` Keycloak.
+"""Создаёт роли и пользователей SSO в реалме Keycloak.
 
 Запуск (после ``docker compose up -d keycloak``):
 
@@ -7,8 +7,15 @@
 
 Скрипт идемпотентен: повторный запуск не создаёт дублей, а сбрасывает пароли.
 
+Параметры окружения (все необязательны, значения по умолчанию — для dev):
+
+* ``KEYCLOAK_URL``, ``KEYCLOAK_REALM`` — адрес и реалм;
+* ``KEYCLOAK_ADMIN_USER`` / ``KEYCLOAK_ADMIN_PASSWORD`` — master-админ;
+* ``BOOTSTRAP_ADMIN_EMAIL`` / ``BOOTSTRAP_ADMIN_PASSWORD`` — если заданы,
+  создаётся только этот администратор (прод-режим) вместо dev-аккаунтов.
+
 Использует только стандартную библиотеку (urllib) — без внешних зависимостей.
-После выполнения:
+После выполнения в dev-режиме:
 
     Администратор: admin@example.com  / password123   (роль admin)
     Обычный        sso.user@example.com / password123  (роль user)
@@ -17,6 +24,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -24,18 +32,25 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-KEYCLOAK_URL = "http://localhost:8080"
-REALM = "prototype"
+KEYCLOAK_URL = os.environ.get("KEYCLOAK_URL", "http://localhost:8080").rstrip("/")
+REALM = os.environ.get("KEYCLOAK_REALM", "prototype")
 
-ADMIN_USER = "admin"
-ADMIN_PASSWORD = "admin"  # noqa: S105 — dev-админ Keycloak (docker-compose)
+ADMIN_USER = os.environ.get("KEYCLOAK_ADMIN_USER", "admin")
+ADMIN_PASSWORD = os.environ.get("KEYCLOAK_ADMIN_PASSWORD", "admin")  # noqa: S105
 
 ADMIN_ROLE = "admin"
 
-ACCOUNTS = [
-    {"email": "admin@example.com", "password": "password123", "role": ADMIN_ROLE},
-    {"email": "sso.user@example.com", "password": "password123", "role": "user"},
-]
+_BOOTSTRAP_EMAIL = os.environ.get("BOOTSTRAP_ADMIN_EMAIL", "").strip()
+_BOOTSTRAP_PASSWORD = os.environ.get("BOOTSTRAP_ADMIN_PASSWORD", "")
+if _BOOTSTRAP_EMAIL and _BOOTSTRAP_PASSWORD:
+    ACCOUNTS: list[dict[str, str]] = [
+        {"email": _BOOTSTRAP_EMAIL, "password": _BOOTSTRAP_PASSWORD, "role": ADMIN_ROLE},
+    ]
+else:
+    ACCOUNTS = [
+        {"email": "admin@example.com", "password": "password123", "role": ADMIN_ROLE},
+        {"email": "sso.user@example.com", "password": "password123", "role": "user"},
+    ]
 
 
 class Unreachable(Exception):

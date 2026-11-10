@@ -42,6 +42,7 @@ RUN useradd --system --uid 10001 --create-home --home-dir /app appuser
 
 COPY --from=deps /app/.venv /app/.venv
 COPY src ./src
+COPY scripts ./scripts
 COPY alembic ./alembic
 COPY alembic.ini ./
 COPY --from=frontend /build/frontend/dist ./static

@@ -123,7 +123,7 @@ async def test_email_filter(async_client: AsyncClient, admin_token: str) -> None
 async def test_task_events_are_logged(async_client: AsyncClient, user_token: str) -> None:
     """Создание, изменение и удаление задачи попадают в аудит."""
     task = await create_task(async_client, user_token, title="Задача для аудита")
-    await async_client.put(
+    await async_client.patch(
         f"/tasks/{task['id']}", json={"status": "done"}, headers=auth_headers(user_token)
     )
     await async_client.delete(f"/tasks/{task['id']}", headers=auth_headers(user_token))
@@ -182,7 +182,7 @@ async def test_role_change_is_logged(async_client: AsyncClient, admin_token: str
     )
     user_id = created.json()["id"]
 
-    response = await async_client.put(
+    response = await async_client.patch(
         f"/admin/users/{user_id}/role",
         json={"role": "ADMIN"},
         headers=auth_headers(admin_token),

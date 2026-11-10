@@ -195,7 +195,7 @@ export const api = {
   },
 
   updateTask(id: number, payload: Partial<TaskPayload>): Promise<Task> {
-    return request<Task>(`/tasks/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+    return request<Task>(`/tasks/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
   },
 
   deleteTask(id: number): Promise<void> {
@@ -216,7 +216,7 @@ export const api = {
 
   setRole(id: number, role: Role): Promise<User> {
     return request<User>(`/admin/users/${id}/role`, {
-      method: "PUT",
+      method: "PATCH",
       body: JSON.stringify({ role }),
     });
   },

@@ -34,11 +34,11 @@ Alembic, Docker, React SPA, тесты на Testcontainers.
 | POST | `/auth/logout` | cookie сессии |
 | GET | `/auth/profile` | авторизованный |
 | GET/POST | `/tasks` | авторизованный |
-| GET/PUT/DELETE | `/tasks/{task_id}` | авторизованный |
+| GET/PATCH/DELETE | `/tasks/{task_id}` | авторизованный |
 | GET | `/admin/users` | ADMIN |
 | POST | `/admin/users` | ADMIN |
 | DELETE | `/admin/users/{user_id}` | ADMIN |
-| PUT | `/admin/users/{user_id}/role` | ADMIN |
+| PATCH | `/admin/users/{user_id}/role` | ADMIN |
 | GET | `/audit` | ADMIN |
 | GET | `/audit/me` | авторизованный |
 | GET | `/health` | публичный |

@@ -95,7 +95,7 @@ async def get_task(task_id: int, current_user: CurrentUser, session: DbSession) 
     return TaskRead.model_validate(task)
 
 
-@router.put("/{task_id}", response_model=TaskRead, summary="Обновить задачу")
+@router.patch("/{task_id}", response_model=TaskRead, summary="Обновить задачу")
 async def update_task(
     task_id: int,
     payload: TaskUpdate,

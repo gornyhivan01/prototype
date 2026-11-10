@@ -86,7 +86,7 @@ async def test_user_cannot_update_foreign_task(
     """Чужую задачу нельзя изменить."""
     foreign = await create_task(async_client, other_user_token, title="Чужая")
 
-    response = await async_client.put(
+    response = await async_client.patch(
         f"/tasks/{foreign['id']}",
         json={"title": "Взлом"},
         headers=auth_headers(user_token),
@@ -119,10 +119,10 @@ async def test_user_cannot_delete_foreign_task(
 
 
 async def test_update_task_changes_fields(async_client: AsyncClient, user_token: str) -> None:
-    """PUT меняет только переданные поля."""
+    """PATCH меняет только переданные поля."""
     created = await create_task(async_client, user_token, title="Старый заголовок")
 
-    response = await async_client.put(
+    response = await async_client.patch(
         f"/tasks/{created['id']}",
         json={"title": "Новый заголовок", "status": "done", "priority": "low"},
         headers=auth_headers(user_token),
@@ -143,7 +143,7 @@ async def test_update_with_empty_title_returns_422(
     """Пустой заголовок не проходит валидацию."""
     created = await create_task(async_client, user_token)
 
-    response = await async_client.put(
+    response = await async_client.patch(
         f"/tasks/{created['id']}", json={"title": ""}, headers=auth_headers(user_token)
     )
 
@@ -331,7 +331,7 @@ async def test_tasks_require_authentication(async_client: AsyncClient) -> None:
     assert (await async_client.get("/tasks")).status_code == 401
     assert (await async_client.post("/tasks", json={"title": "Без токена"})).status_code == 401
     assert (await async_client.get("/tasks/1")).status_code == 401
-    assert (await async_client.put("/tasks/1", json={"title": "Без токена"})).status_code == 401
+    assert (await async_client.patch("/tasks/1", json={"title": "Без токена"})).status_code == 401
     assert (await async_client.delete("/tasks/1")).status_code == 401
 
 
@@ -356,7 +356,7 @@ async def test_admin_can_update_foreign_task(
     """ADMIN может изменить чужую задачу."""
     foreign = await create_task(async_client, user_token, title="До админа")
 
-    response = await async_client.put(
+    response = await async_client.patch(
         f"/tasks/{foreign['id']}",
         json={"status": "done"},
         headers=auth_headers(admin_token),

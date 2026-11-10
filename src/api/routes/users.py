@@ -69,7 +69,7 @@ async def delete_user(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.put("/users/{user_id}/role", response_model=UserRead, summary="Сменить роль")
+@router.patch("/users/{user_id}/role", response_model=UserRead, summary="Сменить роль")
 async def change_role(
     user_id: int,
     payload: RoleUpdate,

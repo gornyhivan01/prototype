@@ -72,7 +72,7 @@ async def test_change_role_promotes_user(
     profile = await async_client.get("/auth/profile", headers=auth_headers(user_token))
     user_id = profile.json()["id"]
 
-    response = await async_client.put(
+    response = await async_client.patch(
         f"/admin/users/{user_id}/role",
         json={"role": "ADMIN"},
         headers=auth_headers(admin_token),
@@ -95,12 +95,12 @@ async def test_change_role_back_to_user(
     profile = await async_client.get("/auth/profile", headers=auth_headers(user_token))
     user_id = profile.json()["id"]
 
-    await async_client.put(
+    await async_client.patch(
         f"/admin/users/{user_id}/role",
         json={"role": "ADMIN"},
         headers=auth_headers(admin_token),
     )
-    response = await async_client.put(
+    response = await async_client.patch(
         f"/admin/users/{user_id}/role",
         json={"role": "USER"},
         headers=auth_headers(admin_token),
@@ -117,7 +117,7 @@ async def test_change_role_is_forbidden_for_user(
     async_client: AsyncClient, user_token: str
 ) -> None:
     """Обычный пользователь не может менять роли."""
-    response = await async_client.put(
+    response = await async_client.patch(
         "/admin/users/1/role", json={"role": "ADMIN"}, headers=auth_headers(user_token)
     )
 
@@ -128,7 +128,7 @@ async def test_change_role_unknown_user_returns_404(
     async_client: AsyncClient, admin_token: str
 ) -> None:
     """Несуществующий пользователь даёт 404."""
-    response = await async_client.put(
+    response = await async_client.patch(
         "/admin/users/999999/role",
         json={"role": "ADMIN"},
         headers=auth_headers(admin_token),
@@ -142,7 +142,7 @@ async def test_change_role_invalid_role_returns_422(
     async_client: AsyncClient, admin_token: str
 ) -> None:
     """Роль вне перечисления отклоняется."""
-    response = await async_client.put(
+    response = await async_client.patch(
         "/admin/users/1/role",
         json={"role": "SUPERUSER"},
         headers=auth_headers(admin_token),

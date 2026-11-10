@@ -130,12 +130,12 @@ npm run build      # dist/ -> в образе /app/static
 | GET | `/tasks` | авторизованный | Список задач (пагинация, фильтры) |
 | POST | `/tasks` | авторизованный | Создать задачу + «email» |
 | GET | `/tasks/{task_id}` | авторизованный | Задача по id |
-| PUT | `/tasks/{task_id}` | авторизованный | Обновить задачу |
+| PATCH | `/tasks/{task_id}` | авторизованный | Обновить задачу |
 | DELETE | `/tasks/{task_id}` | авторизованный | Удалить задачу |
 | GET | `/admin/users` | ADMIN | Список пользователей |
 | POST | `/admin/users` | ADMIN | Создать пользователя с любой ролью |
 | DELETE | `/admin/users/{user_id}` | ADMIN | Удалить пользователя (задачи → в архив) |
-| PUT | `/admin/users/{user_id}/role` | ADMIN | Сменить роль |
+| PATCH | `/admin/users/{user_id}/role` | ADMIN | Сменить роль |
 | GET | `/audit` | ADMIN | Журнал аудита целиком |
 | GET | `/audit/me` | авторизованный | Свои события |
 
@@ -304,7 +304,7 @@ docker compose exec db psql -U app -d app \
 ```
 
 После этого вход тем же email даёт админские права (`GET /admin/users`,
-`PUT /admin/users/{id}/role`, `GET /audit`).
+`PATCH /admin/users/{id}/role`, `GET /audit`).
 
 ## Переменные окружения
 

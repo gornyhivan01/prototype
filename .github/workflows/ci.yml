@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Качество и тесты
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: app
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U app -d app"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      TEST_DATABASE_URL: postgresql+asyncpg://app:app@localhost:5432/app
+      SECRET_KEY: ci-secret-key-0123456789abcdef0123456789
+      DEBUG: "false"
+
+    steps:
+      - name: Получить репозиторий
+        uses: actions/checkout@v7
+
+      - name: Установить uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Установить зависимости
+        # --locked: uv.lock должен совпадать с pyproject.toml.
+        run: uv sync --locked
+
+      - name: Линтер (ruff)
+        run: uv run ruff check .
+
+      - name: Форматирование (black)
+        run: uv run black --check .
+
+      - name: Тесты с порогом покрытия
+        # Порог 75%: тесты API и новые тесты аудита.
+        run: uv run pytest --cov-fail-under=75
+
+  frontend:
+    name: Сборка интерфейса
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Получить репозиторий
+        uses: actions/checkout@v7
+
+      - name: Установить Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Установить зависимости
+        run: npm ci
+
+      - name: Проверить типы и собрать
+        run: npm run build
+
+  docker:
+    name: Сборка образа
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: [quality, frontend]
+
+    steps:
+      - name: Получить репозиторий
+        uses: actions/checkout@v7
+
+      - name: Собрать образ
+        run: docker build --tag prototype-app:ci .
+
+      - name: Проверить импорт приложения
+        run: docker run --rm prototype-app:ci python -c "import src.main; print('import OK')"
+
+      - name: Проверить отдачу интерфейса и /health
+        run: |
+          docker run -d --name prototype-ci -p 8000:8000 prototype-app:ci
+          for attempt in $(seq 1 30); do
+            curl -fsS http://localhost:8000/health >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -fsS http://localhost:8000/health
+          curl -fsS http://localhost:8000/ | grep -q 'id="root"'
+          docker rm -f prototype-ci
